@@ -8,6 +8,7 @@ using RagServer.Data;
 using RagServer.Embeddings;
 using RagServer.Ingestion;
 using RagServer.Mcp;
+using RagServer.Ocr;
 using RagServer.Search;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -25,6 +26,14 @@ builder.Services.AddHttpClient<OllamaEmbedder>((sp, http) =>
     http.BaseAddress = new Uri(opt.OllamaUrl.TrimEnd('/') + "/");
     http.Timeout = TimeSpan.FromMinutes(5);
 });
+
+builder.Services.AddHttpClient<OcrEngine>((sp, http) =>
+{
+    var opt = sp.GetRequiredService<IOptions<RagOptions>>().Value;
+    http.BaseAddress = new Uri(opt.OllamaUrl.TrimEnd('/') + "/");
+    http.Timeout = Timeout.InfiniteTimeSpan; // each page has its own timeout (Rag:Ocr:PageTimeoutSeconds)
+});
+builder.Services.AddSingleton<OcrCancellation>();
 
 builder.Services.AddSingleton<FileStore>();
 builder.Services.AddSingleton<IngestQueue>();
@@ -49,8 +58,13 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Revalidate the UI on every load (cheap via ETag) so a redeploy is picked up without a manual refresh.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
+});
 app.MapRagApi();
+app.MapOcrApi();
 app.MapMcp("/mcp");
 
 app.Run();

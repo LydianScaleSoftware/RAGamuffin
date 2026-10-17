@@ -45,11 +45,65 @@ $("collection").addEventListener("change", () => {
 });
 
 // ---------- documents ----------
+let ocrStatus = { available: false, model: "", reason: "checking…" };
+const busy = (d) => d.status === "pending" || d.status === "ocr";
+
+async function loadOcrStatus() {
+  try { ocrStatus = await api("/api/ocr"); } catch { ocrStatus = { available: false, model: "", reason: "Server unreachable" }; }
+}
+
 async function loadDocs() {
   docs = await api("/api/documents");
   renderDocs();
   clearTimeout(pollTimer);
-  if (docs.some((d) => d.status === "pending")) pollTimer = setTimeout(refresh, 2000);
+  if (docs.some(busy)) pollTimer = setTimeout(refresh, 2000);
+}
+
+function statusCell(d) {
+  const notice = d.error ? ` <span class="warn" title="${esc(d.error)}">⚠</span>` : "";
+  switch (d.status) {
+    case "pending":
+      return `<span class="status-pending">indexing…</span>`;
+    case "ocr": {
+      if (d.progressTotal == null) return `<span class="status-ocr">OCR queued…</span>`;
+      const pct = d.progressTotal ? Math.round(100 * d.progressDone / d.progressTotal) : 0;
+      return `<span class="status-ocr">OCR ${d.progressDone}/${d.progressTotal}</span>
+        <span class="progress" title="${pct}%"><span style="width:${pct}%"></span></span>`;
+    }
+    case "needs_ocr":
+      return `<span class="status-needs_ocr" title="${esc(d.error)}">needs OCR</span>`;
+    case "failed":
+      return `<span class="status-failed" title="${esc(d.error)}">failed ⚠</span>`;
+    default: {
+      let badge = "";
+      if (d.ocrPages > 0) {
+        const all = d.ocrPages === d.pageCount;
+        const tip = `Text from local OCR · ${d.ocrModel ?? "unknown model"} · ${d.ocrPages} of ${d.pageCount} pages` +
+          (d.ocrAt ? ` · ${when(d.ocrAt)}` : "");
+        badge = ` <span class="badge ocr" title="${esc(tip)}">OCR${all ? "" : ` ${d.ocrPages}/${d.pageCount}`}</span>`;
+      }
+      const empty = d.contentType === "pdf" && d.emptyPages > 0
+        ? ` <span class="badge muted-badge" title="${d.emptyPages} page${d.emptyPages > 1 ? "s have" : " has"} no text; use Re-index… to OCR them">${d.emptyPages} blank</span>`
+        : "";
+      return `<span class="status-ready">ready</span>${badge}${empty}${notice}`;
+    }
+  }
+}
+
+// The PDF dialog needs page statistics; a PDF that has never been analyzed page by page (e.g. one that failed
+// before OCR existed) just gets a plain re-index, which analyzes it.
+const usesReindexDialog = (d) => d.contentType === "pdf" && d.pageCount > 0;
+
+function actionButtons(d) {
+  const del = `<button class="small secondary danger" data-delete="${d.id}">Delete</button>`;
+  if (d.status === "ocr")
+    return `<button class="small secondary" data-cancel-ocr="${d.id}">Cancel OCR</button>${del}`;
+  if (d.status === "needs_ocr") {
+    const tip = ocrStatus.available ? `Read the scanned pages with ${ocrStatus.model}` : ocrStatus.reason;
+    return `<button class="small" data-run-ocr="${d.id}" title="${esc(tip)}" ${ocrStatus.available ? "" : "disabled"}>Run OCR</button>${del}`;
+  }
+  const label = usesReindexDialog(d) ? "Re-index…" : "Re-index";
+  return `<button class="small secondary" data-reindex="${d.id}" ${d.status === "pending" ? "disabled" : ""}>${label}</button>${del}`;
 }
 
 function renderDocs() {
@@ -66,36 +120,124 @@ function renderDocs() {
         <td>${esc(d.language ?? d.contentType)}</td>
         <td class="num">${size(d.sizeBytes)}</td>
         <td class="num">${d.chunkCount}</td>
-        <td class="status-${d.status}" title="${esc(d.error)}">${d.status}${d.error ? " ⚠" : ""}</td>
+        <td class="status">${statusCell(d)}</td>
         <td>${when(d.updatedAt)}</td>
-        <td><div class="row">
-          <button class="small secondary" data-reindex="${d.id}">Re-index</button>
-          <button class="small secondary danger" data-delete="${d.id}">Delete</button>
-        </div></td>
+        <td><div class="row">${actionButtons(d)}</div></td>
       </tr>`).join("");
 }
 
 $("docs").addEventListener("click", async (e) => {
-  const t = e.target;
-  if (t.dataset.view) return openViewer(t.dataset.view);
-  if (t.dataset.reindex) {
-    t.disabled = true;
-    await api(`/api/documents/${t.dataset.reindex}/reindex`, { method: "POST" });
-    return refresh();
-  }
-  if (t.dataset.delete) {
-    const d = docs.find((x) => x.id === t.dataset.delete);
-    if (!confirm(`Delete ${d.name} from ${collectionLabel(d.collection)}?`)) return;
-    await api(`/api/documents/${d.id}`, { method: "DELETE" });
-    return refresh();
+  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr]");
+  if (!t) return;
+  try {
+    if (t.dataset.view) return openViewer(t.dataset.view);
+    if (t.dataset.reindex) {
+      const d = docs.find((x) => x.id === t.dataset.reindex);
+      if (usesReindexDialog(d)) return openReindexDialog(d.id);
+      t.disabled = true;
+      await api(`/api/documents/${d.id}/reindex`, { method: "POST" });
+      return refresh();
+    }
+    if (t.dataset.runOcr) {
+      t.disabled = true;
+      await postJson(`/api/documents/${t.dataset.runOcr}/ocr`, { scope: "missing" });
+      return refresh();
+    }
+    if (t.dataset.cancelOcr) {
+      t.disabled = true;
+      await api(`/api/documents/${t.dataset.cancelOcr}/ocr/cancel`, { method: "POST" });
+      return refresh();
+    }
+    if (t.dataset.delete) {
+      const d = docs.find((x) => x.id === t.dataset.delete);
+      if (!confirm(`Delete ${d.name} from ${collectionLabel(d.collection)}?`)) return;
+      await api(`/api/documents/${d.id}`, { method: "DELETE" });
+      return refresh();
+    }
+  } catch (err) {
+    alert(err.message);
+    refresh();
   }
 });
 $("filterCollection").addEventListener("change", renderDocs);
 $("filterName").addEventListener("input", renderDocs);
 
 async function refresh() {
+  await loadOcrStatus();
   await Promise.all([loadDocs(), loadCollections()]);
 }
+
+// ---------- PDF re-index dialog ----------
+let reindexDoc = null;
+
+async function openReindexDialog(id) {
+  await loadOcrStatus();
+  const { document: d, revertablePages } = await api(`/api/documents/${id}`);
+  reindexDoc = d;
+  $("reindexTitle").textContent = d.name;
+
+  const hasOcr = d.ocrPages > 0;
+  $("reindexKeepLabel").textContent = hasOcr ? "Re-index, keeping OCR'd pages" : "Re-index from the PDF's embedded text";
+  $("reindexKeepHint").textContent = hasOcr
+    ? `Re-reads the embedded text. The ${d.ocrPages} OCR'd page${d.ocrPages > 1 ? "s keep" : " keeps"} their OCR text.`
+    : "Re-reads the text stored in the PDF.";
+
+  const ocrRadio = $("reindexForm").querySelector('input[value="ocr"]');
+  ocrRadio.disabled = !ocrStatus.available;
+  $("ocrScope").disabled = !ocrStatus.available;
+  $("reindexOcrLabel").textContent = `Replace text with local OCR (${ocrStatus.model || "OCR model"})`;
+  const suspectTotal = d.emptyPages + d.suspectPages;
+  $("ocrScope").innerHTML = [
+    `<option value="missing" ${d.emptyPages ? "" : "disabled"}>Pages without text (${d.emptyPages})</option>`,
+    `<option value="suspect" ${suspectTotal ? "" : "disabled"}>Pages without text or that look like poor OCR (${suspectTotal})</option>`,
+    `<option value="all">All pages (${d.pageCount})</option>`,
+  ].join("");
+  $("ocrScope").value = d.emptyPages ? "missing" : suspectTotal ? "suspect" : "all";
+  const modelNote = hasOcr && d.ocrModel && ocrStatus.model && d.ocrModel !== ocrStatus.model
+    ? ` Currently OCR'd with ${d.ocrModel}; this run uses ${ocrStatus.model}.` : "";
+  $("reindexOcrHint").textContent = ocrStatus.available
+    ? `Roughly 5–20 seconds per page on the Ollama server. Embedded text is kept and can be restored.${modelNote}`
+    : `Unavailable: ${ocrStatus.reason}`;
+  updateOcrEstimate();
+
+  const revert = $("reindexRevertRow");
+  revert.hidden = revertablePages === 0;
+  $("reindexRevertHint").textContent =
+    `${revertablePages} OCR'd page${revertablePages > 1 ? "s have" : " has"} embedded text to go back to. Pages without embedded text keep their OCR.`;
+
+  $("reindexForm").querySelector('input[value="keep"]').checked = true;
+  $("reindexDialog").returnValue = "";
+  $("reindexDialog").showModal();
+}
+
+function updateOcrEstimate() {
+  if (!reindexDoc) return;
+  const scope = $("ocrScope").value;
+  const n = scope === "missing" ? reindexDoc.emptyPages
+    : scope === "suspect" ? reindexDoc.emptyPages + reindexDoc.suspectPages
+    : reindexDoc.pageCount;
+  const mins = Math.max(1, Math.round(n * 12 / 60));
+  $("ocrEstimate").textContent = n ? `${n} page${n > 1 ? "s" : ""}, about ${mins} minute${mins > 1 ? "s" : ""}` : "";
+}
+
+$("ocrScope").addEventListener("change", () => {
+  $("reindexForm").querySelector('input[value="ocr"]').checked = true;
+  updateOcrEstimate();
+});
+
+$("reindexDialog").addEventListener("close", async () => {
+  if ($("reindexDialog").returnValue !== "confirm" || !reindexDoc) return;
+  const choice = $("reindexForm").querySelector('input[name="reindexChoice"]:checked').value;
+  const id = reindexDoc.id;
+  try {
+    if (choice === "keep") await api(`/api/documents/${id}/reindex`, { method: "POST" });
+    else if (choice === "ocr") await postJson(`/api/documents/${id}/ocr`, { scope: $("ocrScope").value });
+    else if (choice === "revert") await api(`/api/documents/${id}/revert-ocr`, { method: "POST" });
+  } catch (err) {
+    alert(err.message);
+  }
+  refresh();
+});
 
 // ---------- upload ----------
 async function upload(files) {
@@ -172,7 +314,7 @@ $("searchForm").addEventListener("submit", async (e) => {
     out.innerHTML = hits.length === 0 ? `<p class="muted">No results.</p>` : hits.map((h, i) => `
       <div class="hit">
         <div class="hit-head">
-          <strong>[${i + 1}] ${esc(collectionLabel(h.collection))} / ${esc(h.documentName)} <span class="muted">${location_(h)}</span></strong>
+          <strong>[${i + 1}] ${esc(collectionLabel(h.collection))} / ${esc(h.documentName)} <span class="muted">${location_(h)}</span>${h.ocr ? ` <span class="badge ocr" title="Read by ${esc(h.ocrModel)}">OCR</span>` : ""}</strong>
           <span class="muted">score ${h.score.toFixed(4)}${h.similarity != null ? ` · similarity ${h.similarity.toFixed(2)}` : ""}${h.keywordMatch ? " · keyword match" : ""}</span>
         </div>
         ${h.headingPath ? `<div class="muted">${esc(h.headingPath)}</div>` : ""}
@@ -188,7 +330,7 @@ let viewerDoc = null;
 let viewerChunks = null;
 
 async function openViewer(id) {
-  const [doc, chunks] = await Promise.all([api(`/api/documents/${id}`), api(`/api/documents/${id}/chunks`)]);
+  const [{ document: doc }, chunks] = await Promise.all([api(`/api/documents/${id}`), api(`/api/documents/${id}/chunks`)]);
   viewerDoc = doc;
   viewerChunks = chunks;
   $("viewerTitle").textContent = `${collectionLabel(doc.collection)} / ${doc.name}`;
@@ -200,7 +342,7 @@ async function openViewer(id) {
 function showTab(tab) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   const body = $("viewerBody");
-  if (viewerDoc.status !== "ready") {
+  if (viewerDoc.status !== "ready" && !viewerChunks.length) {
     body.innerHTML = `<p class="status-${viewerDoc.status}">${esc(viewerDoc.status)}${viewerDoc.error ? ": " + esc(viewerDoc.error) : ""}</p>`;
     return;
   }
@@ -208,7 +350,7 @@ function showTab(tab) {
     ? `<pre>${esc(viewerDoc.text)}</pre>`
     : viewerChunks.map((c) => `
       <div class="hit">
-        <div class="hit-head"><strong>#${c.ordinal + 1} <span class="muted">${location_(c)}</span></strong><span class="muted">${c.content.length} chars</span></div>
+        <div class="hit-head"><strong>#${c.ordinal + 1} <span class="muted">${location_(c)}</span>${c.ocr ? ` <span class="badge ocr">OCR</span>` : ""}</strong><span class="muted">${c.content.length} chars</span></div>
         ${c.headingPath ? `<div class="muted">${esc(c.headingPath)}</div>` : ""}
         <pre>${esc(c.content)}</pre>
       </div>`).join("");

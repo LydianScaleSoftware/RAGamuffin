@@ -31,9 +31,10 @@ public sealed class RagTools(RagDbContext db, SearchService search, IOptions<Rag
             sb.AppendLine();
             sb.Append($"### [{i + 1}] {h.Collection}/{h.DocumentName}");
             if (h.StartLine is not null) sb.Append($" (lines {h.StartLine}-{h.EndLine})");
-            if (h.Page is not null) sb.Append($" (page {h.Page})");
+            if (h.Page is not null) sb.Append($" (page {h.Page}{(h.Ocr ? ", OCR" : "")})");
             sb.AppendLine();
             if (h.HeadingPath is not null) sb.AppendLine($"Section: {h.HeadingPath}");
+            if (h.Ocr) sb.AppendLine($"Note: text read from a scanned page by local OCR ({h.OcrModel}); may contain recognition errors.");
             sb.AppendLine($"Relevance: {h.Score:F4}" + (h.Similarity is { } s ? $", similarity {s:F2}" : ""));
             sb.AppendLine("```");
             sb.AppendLine(h.Content);
@@ -51,14 +52,14 @@ public sealed class RagTools(RagDbContext db, SearchService search, IOptions<Rag
         var q = db.Documents.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(collection)) q = q.Where(d => d.Collection == collection);
         var docs = await q.OrderBy(d => d.Collection).ThenBy(d => d.Name)
-            .Select(d => new { d.Id, d.Collection, d.Name, d.ContentType, d.Language, d.SizeBytes, d.ChunkCount, d.Status, d.UpdatedAt })
+            .Select(d => new { d.Id, d.Collection, d.Name, d.ContentType, d.Language, d.SizeBytes, d.ChunkCount, d.Status, d.UpdatedAt, d.OcrPages, d.PageCount })
             .ToListAsync(ct);
         if (docs.Count == 0)
             return collection is null ? "The index is empty." : $"No documents in collection \"{collection}\".";
 
         var sb = new StringBuilder($"{docs.Count} documents:\n\n| collection | name | type | size | chunks | status | updated | id |\n|---|---|---|---|---|---|---|---|\n");
         foreach (var d in docs)
-            sb.AppendLine($"| {d.Collection} | {d.Name} | {d.Language ?? d.ContentType} | {FormatSize(d.SizeBytes)} | {d.ChunkCount} | {d.Status} | {d.UpdatedAt:yyyy-MM-dd} | {d.Id} |");
+            sb.AppendLine($"| {d.Collection} | {d.Name} | {d.Language ?? d.ContentType}{(d.OcrPages > 0 ? $" (OCR {d.OcrPages}/{d.PageCount} pages)" : "")} | {FormatSize(d.SizeBytes)} | {d.ChunkCount} | {d.Status} | {d.UpdatedAt:yyyy-MM-dd} | {d.Id} |");
         return sb.ToString();
     }
 
@@ -82,13 +83,16 @@ public sealed class RagTools(RagDbContext db, SearchService search, IOptions<Rag
 
         var doc = matches[0];
         if (doc.Status != DocumentStatus.Ready || doc.Text is null)
-            return $"{doc.Collection}/{doc.Name} is {doc.Status}" + (doc.Error is null ? "." : $": {doc.Error}");
+            return $"{doc.Collection}/{doc.Name} is {doc.Status.Replace('_', ' ')}" + (doc.Error is null ? "." : $": {doc.Error}");
 
         var max = options.Value.MaxDocumentChars;
         var text = doc.Text.Length > max
             ? doc.Text[..max] + $"\n\n[truncated: showing {max:N0} of {doc.Text.Length:N0} characters; use search_documents for specific parts]"
             : doc.Text;
-        return $"# {doc.Collection}/{doc.Name}\n\n{text}";
+        var ocrNote = doc.OcrPages > 0
+            ? $"Note: {doc.OcrPages} of {doc.PageCount} pages were read by local OCR ({doc.OcrModel}) and may contain recognition errors.\n\n"
+            : "";
+        return $"# {doc.Collection}/{doc.Name}\n\n{ocrNote}{text}";
     }
 
     static string FormatSize(long bytes) => bytes switch

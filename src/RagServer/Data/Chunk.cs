@@ -19,6 +19,9 @@ public sealed class Chunk
     public int? EndLine { get; set; }
     public int? Page { get; set; }
 
+    /// <summary>True when the text came from local OCR rather than the file itself.</summary>
+    public bool Ocr { get; set; }
+
     public Vector? Embedding { get; set; }
 
     /// <summary>Generated column (heading path + content) for full-text search.</summary>

@@ -17,6 +17,8 @@ public sealed record SearchHit(
     int? StartLine,
     int? EndLine,
     int? Page,
+    bool Ocr,
+    string? OcrModel,
     double Score,
     double? Similarity,
     bool KeywordMatch,
@@ -37,7 +39,9 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
         var candidates = Math.Max(topK * 4, 20);
         var queryVector = new Vector(await embedder.EmbedQueryAsync(query, ct));
 
-        var chunks = db.Chunks.AsNoTracking().Where(c => c.Document.Status == DocumentStatus.Ready);
+        // A document being OCR'd keeps serving its previous chunks until the run finishes.
+        var chunks = db.Chunks.AsNoTracking()
+            .Where(c => c.Document.Status == DocumentStatus.Ready || c.Document.Status == DocumentStatus.Ocr);
         if (!string.IsNullOrWhiteSpace(collection))
             chunks = chunks.Where(c => c.Document.Collection == collection);
 
@@ -63,7 +67,7 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
             .Select(c => new
             {
                 c.Id, c.DocumentId, c.Document.Name, c.Document.Collection, c.Document.ContentType,
-                c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.Content,
+                c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.Content, c.Ocr, c.Document.OcrModel,
             })
             .ToDictionaryAsync(c => c.Id, ct);
 
@@ -74,7 +78,7 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
         {
             var r = rows[f.Id];
             return new SearchHit(r.DocumentId, r.Name, r.Collection, r.ContentType, r.Id, r.Ordinal,
-                r.HeadingPath, r.StartLine, r.EndLine, r.Page,
+                r.HeadingPath, r.StartLine, r.EndLine, r.Page, r.Ocr, r.Ocr ? r.OcrModel : null,
                 Math.Round(f.Score, 5),
                 distances.TryGetValue(f.Id, out var d) ? Math.Round(1 - d, 4) : null,
                 keywordSet.Contains(f.Id),

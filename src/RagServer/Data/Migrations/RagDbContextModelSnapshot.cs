@@ -55,6 +55,10 @@ namespace RagServer.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("heading_path");
 
+                    b.Property<bool>("Ocr")
+                        .HasColumnType("boolean")
+                        .HasColumnName("ocr");
+
                     b.Property<int>("Ordinal")
                         .HasColumnType("integer")
                         .HasColumnName("ordinal");
@@ -150,6 +154,10 @@ namespace RagServer.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<int>("EmptyPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("empty_pages");
+
                     b.Property<string>("Error")
                         .HasColumnType("text")
                         .HasColumnName("error");
@@ -162,6 +170,38 @@ namespace RagServer.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("name");
+
+                    b.Property<DateTimeOffset?>("OcrAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ocr_at");
+
+                    b.Property<string>("OcrModel")
+                        .HasColumnType("text")
+                        .HasColumnName("ocr_model");
+
+                    b.Property<int>("OcrPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("ocr_pages");
+
+                    b.Property<DateTimeOffset?>("OcrRequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ocr_requested_at");
+
+                    b.Property<string>("OcrScope")
+                        .HasColumnType("text")
+                        .HasColumnName("ocr_scope");
+
+                    b.Property<int>("PageCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("page_count");
+
+                    b.Property<int?>("ProgressDone")
+                        .HasColumnType("integer")
+                        .HasColumnName("progress_done");
+
+                    b.Property<int?>("ProgressTotal")
+                        .HasColumnType("integer")
+                        .HasColumnName("progress_total");
 
                     b.Property<string>("Sha256")
                         .IsRequired()
@@ -176,6 +216,10 @@ namespace RagServer.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("status");
+
+                    b.Property<int>("SuspectPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("suspect_pages");
 
                     b.Property<string>("Text")
                         .HasColumnType("text")
@@ -193,6 +237,58 @@ namespace RagServer.Data.Migrations
                         .HasDatabaseName("ix_documents_collection_name");
 
                     b.ToTable("documents", (string)null);
+                });
+
+            modelBuilder.Entity("RagServer.Data.DocumentPage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("document_id");
+
+                    b.Property<string>("EmbeddedText")
+                        .HasColumnType("text")
+                        .HasColumnName("embedded_text");
+
+                    b.Property<DateTimeOffset?>("OcrAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ocr_at");
+
+                    b.Property<string>("OcrModel")
+                        .HasColumnType("text")
+                        .HasColumnName("ocr_model");
+
+                    b.Property<string>("OcrText")
+                        .HasColumnType("text")
+                        .HasColumnName("ocr_text");
+
+                    b.Property<int>("Page")
+                        .HasColumnType("integer")
+                        .HasColumnName("page");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("source");
+
+                    b.Property<string>("SuspectReason")
+                        .HasColumnType("text")
+                        .HasColumnName("suspect_reason");
+
+                    b.HasKey("Id")
+                        .HasName("pk_document_pages");
+
+                    b.HasIndex("DocumentId", "Page")
+                        .IsUnique()
+                        .HasDatabaseName("ix_document_pages_document_id_page");
+
+                    b.ToTable("document_pages", (string)null);
                 });
 
             modelBuilder.Entity("RagServer.Data.Chunk", b =>
@@ -218,9 +314,21 @@ namespace RagServer.Data.Migrations
                         .HasConstraintName("fk_documents_collections_collection");
                 });
 
+            modelBuilder.Entity("RagServer.Data.DocumentPage", b =>
+                {
+                    b.HasOne("RagServer.Data.Document", null)
+                        .WithMany("Pages")
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_document_pages_documents_document_id");
+                });
+
             modelBuilder.Entity("RagServer.Data.Document", b =>
                 {
                     b.Navigation("Chunks");
+
+                    b.Navigation("Pages");
                 });
 #pragma warning restore 612, 618
         }

@@ -9,6 +9,7 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<Chunk> Chunks => Set<Chunk>();
     public DbSet<Collection> Collections => Set<Collection>();
+    public DbSet<DocumentPage> Pages => Set<DocumentPage>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -30,6 +31,15 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
             e.HasIndex(d => new { d.Collection, d.Name }).IsUnique();
             e.HasMany(d => d.Chunks).WithOne(c => c.Document).HasForeignKey(c => c.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(d => d.Pages).WithOne().HasForeignKey(p => p.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        model.Entity<DocumentPage>(e =>
+        {
+            e.ToTable("document_pages");
+            e.HasIndex(p => new { p.DocumentId, p.Page }).IsUnique();
+            e.Ignore(p => p.EffectiveText);
         });
 
         model.Entity<Chunk>(e =>

@@ -30,6 +30,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Elements with display rules of their own must still honour the hidden attribute. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -143,3 +145,32 @@ label.radio { display: block; padding: 4px 0; cursor: pointer; }
 .row.end { justify-content: flex-end; }
 button.danger-solid { background: var(--bad); color: #fff; }
 #removeDialog { width: min(480px, calc(100vw - 32px)); }
+
+/* ---------- OCR status ---------- */
+.status-needs_ocr { color: var(--warn); font-weight: 600; }
+.status-ocr { color: var(--accent); }
+td.status { white-space: nowrap; }
+.warn { color: var(--warn); cursor: help; }
+.badge {
+  display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px;
+  border: 1px solid currentColor; vertical-align: 1px; cursor: help;
+}
+.badge.ocr { color: var(--accent); }
+.badge.muted-badge { color: var(--muted); }
+.progress {
+  display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--border);
+  vertical-align: middle; overflow: hidden; margin-left: 4px;
+}
+.progress > span { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+
+/* ---------- re-index dialog ---------- */
+#reindexDialog { width: min(560px, calc(100vw - 32px)); }
+label.choice {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px; margin: 8px 0;
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+}
+label.choice:has(input:checked) { border-color: var(--accent); }
+label.choice:has(input:disabled) { opacity: .55; cursor: default; }
+label.choice input { margin-top: 4px; }
+label.choice .hint { display: block; margin: 4px 0 0; }
+.scope-row { margin-top: 6px; }

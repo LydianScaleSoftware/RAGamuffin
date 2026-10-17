@@ -6,6 +6,7 @@ using Pgvector;
 using RagServer.Collections;
 using RagServer.Data;
 using RagServer.Embeddings;
+using RagServer.Ocr;
 
 namespace RagServer.Ingestion;
 
@@ -16,6 +17,7 @@ public sealed class IngestService(
     RagDbContext db,
     FileStore files,
     IngestQueue queue,
+    OcrCancellation ocrCancellation,
     CollectionService collections,
     IOptions<RagOptions> options)
 {
@@ -38,8 +40,17 @@ public sealed class IngestService(
         var now = DateTimeOffset.UtcNow;
         var doc = await db.Documents.SingleOrDefaultAsync(d => d.Collection == collection && d.Name == name, ct);
 
-        if (doc is { Status: DocumentStatus.Ready } && doc.Sha256 == sha)
+        if (doc is { Status: DocumentStatus.Ready or DocumentStatus.NeedsOcr or DocumentStatus.Ocr } && doc.Sha256 == sha)
             return new(name, collection, doc.Id, "unchanged");
+
+        // New content invalidates the old file's pages and any OCR of them, including a run in progress.
+        if (doc is not null && doc.Sha256 != sha)
+        {
+            if (doc.Status == DocumentStatus.Ocr) ocrCancellation.Cancel(doc.Id);
+            await db.Pages.Where(p => p.DocumentId == doc.Id).ExecuteDeleteAsync(ct);
+            doc.OcrScope = null;
+            doc.OcrRequestedAt = null;
+        }
 
         var outcome = doc is null ? "added" : "replaced";
         if (doc is null)
@@ -61,6 +72,7 @@ public sealed class IngestService(
         doc.SizeBytes = bytes.Length;
         doc.Status = DocumentStatus.Pending;
         doc.Error = null;
+        doc.ProgressDone = doc.ProgressTotal = null;
         doc.UpdatedAt = now;
 
         await collections.EnsureExistsAsync(collection, ct);
@@ -95,127 +107,3 @@ public sealed class FileStore
     }
 }
 
-public sealed class IngestQueue
-{
-    readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
-
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => _channel.Writer.WriteAsync(id, ct);
-
-    public IAsyncEnumerable<Guid> ReadAllAsync(CancellationToken ct) => _channel.Reader.ReadAllAsync(ct);
-}
-
-/// <summary>Extracts, chunks and embeds queued documents one at a time.</summary>
-public sealed class IngestWorker(
-    IServiceScopeFactory scopes,
-    IngestQueue queue,
-    OllamaEmbedder embedder,
-    FileStore files,
-    IOptions<RagOptions> options,
-    ILogger<IngestWorker> log) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Pick up anything left pending by a previous run.
-        using (var scope = scopes.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
-            var pending = await db.Documents.Where(d => d.Status == DocumentStatus.Pending)
-                .Select(d => d.Id).ToListAsync(stoppingToken);
-            foreach (var id in pending)
-                await queue.EnqueueAsync(id, stoppingToken);
-        }
-
-        await foreach (var id in queue.ReadAllAsync(stoppingToken))
-        {
-            try
-            {
-                await ProcessAsync(id, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                log.LogError(ex, "Indexing document {Id} failed", id);
-                await MarkFailedAsync(id, ex is ExtractionException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}");
-            }
-        }
-    }
-
-    async Task ProcessAsync(Guid id, CancellationToken ct)
-    {
-        using var scope = scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
-        var doc = await db.Documents.SingleOrDefaultAsync(d => d.Id == id, ct);
-        if (doc is null || doc.Status != DocumentStatus.Pending) return;
-
-        if (!files.Exists(id))
-            throw new ExtractionException("Original file is missing from the file store; upload it again.");
-
-        var sha = doc.Sha256;
-        var started = DateTimeOffset.UtcNow;
-        var extracted = TextExtractor.Extract(doc.Name, await files.ReadAsync(id, ct));
-        var opt = options.Value;
-        var chunker = new Chunker(new ChunkerSettings(opt.ChunkTargetChars, opt.ChunkMaxChars, opt.ChunkOverlapChars));
-        var drafts = chunker.Chunk(extracted);
-        if (drafts.Count == 0)
-            throw new ExtractionException("No text found in document.");
-
-        var vectors = await embedder.EmbedDocumentsAsync(
-            drafts.Select(c => Chunker.EmbeddingText(doc.Name, extracted, c)).ToList(), ct);
-        if (vectors[0].Length != RagDbContext.EmbeddingDimensions)
-            throw new InvalidOperationException(
-                $"Embedding model returned {vectors[0].Length} dimensions; the database expects {RagDbContext.EmbeddingDimensions}.");
-
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        // The document may have been re-uploaded or deleted while we were embedding.
-        await db.Entry(doc).ReloadAsync(ct);
-        if (db.Entry(doc).State == EntityState.Detached || doc.Sha256 != sha || doc.Status != DocumentStatus.Pending)
-            return;
-
-        await db.Chunks.Where(c => c.DocumentId == id).ExecuteDeleteAsync(ct);
-        db.Chunks.AddRange(drafts.Select((c, i) => new Chunk
-        {
-            DocumentId = id,
-            Ordinal = i,
-            Content = c.Content,
-            HeadingPath = c.HeadingPath,
-            StartLine = c.StartLine,
-            EndLine = c.EndLine,
-            Page = c.Page,
-            Embedding = new Vector(vectors[i]),
-        }));
-        doc.ContentType = extracted.ContentType;
-        doc.Language = extracted.Language;
-        doc.Text = extracted.Text;
-        doc.ChunkCount = drafts.Count;
-        doc.Status = DocumentStatus.Ready;
-        doc.Error = null;
-        doc.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        log.LogInformation("Indexed {Collection}/{Name}: {Chunks} chunks in {Seconds:F1}s",
-            doc.Collection, doc.Name, drafts.Count, (DateTimeOffset.UtcNow - started).TotalSeconds);
-    }
-
-    async Task MarkFailedAsync(Guid id, string error)
-    {
-        try
-        {
-            using var scope = scopes.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
-            await db.Documents.Where(d => d.Id == id && d.Status == DocumentStatus.Pending)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.Status, DocumentStatus.Failed)
-                    .SetProperty(d => d.Error, error)
-                    .SetProperty(d => d.UpdatedAt, DateTimeOffset.UtcNow));
-        }
-        catch (Exception ex)
-        {
-            log.LogError(ex, "Could not mark document {Id} as failed", id);
-        }
-    }
-}

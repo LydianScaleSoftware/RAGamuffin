@@ -5,6 +5,7 @@ using RagServer.Collections;
 using RagServer.Data;
 using RagServer.Embeddings;
 using RagServer.Ingestion;
+using RagServer.Ocr;
 using RagServer.Search;
 
 namespace RagServer.Api;
@@ -25,6 +26,8 @@ public static class DocumentEndpoints
                 {
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
+                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
+                    d.ProgressDone, d.ProgressTotal,
                 })
                 .ToListAsync(ct);
         });
@@ -45,17 +48,27 @@ public static class DocumentEndpoints
         }).DisableAntiforgery();
 
         api.MapGet("/documents/{id:guid}", async (Guid id, RagDbContext db, CancellationToken ct) =>
-            await db.Documents.AsNoTracking().Where(d => d.Id == id)
+        {
+            var doc = await db.Documents.AsNoTracking().Where(d => d.Id == id)
                 .Select(d => new
                 {
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes, d.Sha256,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt, d.Text,
+                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
+                    d.ProgressDone, d.ProgressTotal,
                 })
-                .SingleOrDefaultAsync(ct) is { } doc ? Results.Ok(doc) : Results.NotFound());
+                .SingleOrDefaultAsync(ct);
+            if (doc is null) return Results.NotFound();
+
+            // OCR'd pages that also have embedded text can be reverted to it.
+            var pages = await db.Pages.AsNoTracking().Where(p => p.DocumentId == id && p.Source == PageSource.Ocr)
+                .Select(p => p.EmbeddedText).ToListAsync(ct);
+            return Results.Ok(new { document = doc, revertablePages = pages.Count(PdfPages.HasUsefulText) });
+        });
 
         api.MapGet("/documents/{id:guid}/chunks", async (Guid id, RagDbContext db, CancellationToken ct) =>
             await db.Chunks.AsNoTracking().Where(c => c.DocumentId == id).OrderBy(c => c.Ordinal)
-                .Select(c => new { c.Id, c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.Content })
+                .Select(c => new { c.Id, c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.Ocr, c.Content })
                 .ToListAsync(ct));
 
         api.MapGet("/documents/{id:guid}/file", async (Guid id, RagDbContext db, FileStore files, CancellationToken ct) =>
@@ -66,8 +79,9 @@ public static class DocumentEndpoints
             return Results.File(await files.ReadAsync(id, ct), type, Path.GetFileName(doc.Name));
         });
 
-        api.MapDelete("/documents/{id:guid}", async (Guid id, RagDbContext db, FileStore files, CancellationToken ct) =>
+        api.MapDelete("/documents/{id:guid}", async (Guid id, RagDbContext db, FileStore files, OcrCancellation ocr, CancellationToken ct) =>
         {
+            ocr.Cancel(id);
             var deleted = await db.Documents.Where(d => d.Id == id).ExecuteDeleteAsync(ct);
             if (deleted == 0) return Results.NotFound();
             files.Delete(id);
@@ -76,12 +90,15 @@ public static class DocumentEndpoints
 
         api.MapPost("/documents/{id:guid}/reindex", async (Guid id, RagDbContext db, IngestQueue queue, CancellationToken ct) =>
         {
-            var updated = await db.Documents.Where(d => d.Id == id)
+            var updated = await db.Documents.Where(d => d.Id == id && d.Status != DocumentStatus.Ocr)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(d => d.Status, DocumentStatus.Pending)
                     .SetProperty(d => d.Error, (string?)null)
                     .SetProperty(d => d.UpdatedAt, DateTimeOffset.UtcNow), ct);
-            if (updated == 0) return Results.NotFound();
+            if (updated == 0)
+                return await db.Documents.AnyAsync(d => d.Id == id, ct)
+                    ? Results.Conflict("OCR is running; cancel it first.")
+                    : Results.NotFound();
             await queue.EnqueueAsync(id, ct);
             return Results.Accepted();
         });

@@ -1,5 +1,4 @@
 using System.Text;
-using UglyToad.PdfPig;
 
 namespace RagServer.Ingestion;
 
@@ -63,27 +62,13 @@ public static class TextExtractor
 
     static ExtractedDocument ExtractPdf(byte[] bytes)
     {
-        var pages = new List<PageText>();
-        try
-        {
-            using var pdf = PdfDocument.Open(bytes);
-            foreach (var page in pdf.GetPages())
-            {
-                var text = UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor.ContentOrderTextExtractor.GetText(page);
-                if (!string.IsNullOrWhiteSpace(text))
-                    pages.Add(new PageText(page.Number, string.Join('\n', Normalize(text).Split('\n').Select(l => l.TrimEnd()))));
-            }
-        }
-        catch (Exception ex) when (ex is not ExtractionException)
-        {
-            throw new ExtractionException($"Could not read PDF: {ex.Message}");
-        }
-
-        if (pages.Count == 0)
-            throw new ExtractionException("PDF contains no extractable text (it may be scanned images; OCR is not supported).");
-
-        var full = string.Join("\n\n", pages.Select(p => $"[Page {p.Page}]\n{p.Text}"));
-        return new("pdf", null, full, pages);
+        var pages = PdfPages.Extract(bytes)
+            .Select(p => new Data.DocumentPage { Page = p.Page, EmbeddedText = p.Text })
+            .ToList();
+        var doc = PdfPages.ToExtracted(pages);
+        if (doc.Pages!.Count == 0)
+            throw new ExtractionException("PDF contains no extractable text (it may be scanned images).");
+        return doc;
     }
 
     /// <summary>Decodes UTF-8/UTF-16 text (BOM aware). Returns null when the bytes look binary.</summary>
@@ -106,5 +91,5 @@ public static class TextExtractor
         return Normalize(text);
     }
 
-    static string Normalize(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
+    static string Normalize(string text) => TextSanitizer.Clean(text.Replace("\r\n", "\n").Replace('\r', '\n'));
 }

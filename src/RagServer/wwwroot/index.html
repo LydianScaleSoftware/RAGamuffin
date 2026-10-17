@@ -80,6 +80,30 @@
     <div id="viewerBody"></div>
   </dialog>
 
+  <dialog id="reindexDialog">
+    <form method="dialog" id="reindexForm">
+      <h2>Re-index <span id="reindexTitle" class="muted"></span></h2>
+      <label class="choice">
+        <input type="radio" name="reindexChoice" value="keep" checked>
+        <span><strong id="reindexKeepLabel"></strong><br><span id="reindexKeepHint" class="hint"></span></span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="reindexChoice" value="ocr">
+        <span><strong id="reindexOcrLabel"></strong>
+          <span class="row scope-row"><select id="ocrScope"></select><span id="ocrEstimate" class="muted"></span></span>
+          <span id="reindexOcrHint" class="hint"></span></span>
+      </label>
+      <label class="choice" id="reindexRevertRow">
+        <input type="radio" name="reindexChoice" value="revert">
+        <span><strong>Revert to embedded text</strong><br><span id="reindexRevertHint" class="hint"></span></span>
+      </label>
+      <div class="row end">
+        <button value="cancel" class="secondary" formnovalidate>Cancel</button>
+        <button value="confirm">Start</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="common.js"></script>
   <script src="app.js"></script>
 </body>
