@@ -219,6 +219,10 @@ textarea.desc {
   width: 100%; min-width: 260px; margin: 0; font: 13px/1.4 inherit; font-family: inherit; resize: vertical;
   background: transparent; border-color: transparent;
 }
-input.keywords { width: 100%; min-width: 200px; background: transparent; border-color: transparent; }
-textarea.desc:hover, textarea.desc:focus, input.keywords:hover, input.keywords:focus { border-color: var(--border); background: var(--bg); }
-textarea.desc.changed, input.keywords.changed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+textarea.keywords {
+  width: 100%; min-width: 200px; margin: 0; font: 13px/1.4 inherit; font-family: inherit; resize: vertical;
+  background: transparent; border-color: transparent;
+}
+textarea.desc.editing, textarea.keywords.editing { min-width: 320px; box-shadow: 0 2px 10px rgba(0, 0, 0, .12); }
+textarea.desc:hover, textarea.desc:focus, textarea.keywords:hover, textarea.keywords:focus { border-color: var(--border); background: var(--bg); }
+textarea.desc.changed, textarea.keywords.changed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }

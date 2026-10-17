@@ -67,7 +67,8 @@ public sealed class CollectionSuggester(HttpClient http, RagDbContext db, IOptio
             ["think"] = false,
             ["keep_alive"] = "5m",
             ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = prompt }),
-            ["options"] = new JsonObject { ["temperature"] = 0.2, ["num_predict"] = 600 },
+            // The prompt (titles and headings) stays well under 8K tokens; a small context keeps the model's memory down.
+            ["options"] = new JsonObject { ["temperature"] = 0.2, ["num_predict"] = 600, ["num_ctx"] = 8192 },
         };
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -20,6 +20,54 @@ opencode ──MCP /mcp─────┘
 | Layout service | Docker container `ragamuffin-layout`, `localhost:5002` (first start downloads its models, a few minutes) |
 | Uploaded originals | `data/files/` |
 
+## Requirements
+
+### Software
+
+| Component | Version | Notes |
+|---|---|---|
+| .NET SDK | 10 | Builds and runs the server. |
+| Docker Desktop | Recent (tested on 29.4) | Runs Postgres + pgvector and the layout service. Allow it at least **8 GB of memory**; **16 GB** is comfortable during layout analysis (*Settings → Resources*). Set it to start at login. |
+| Ollama | Recent (tested on 0.40.5) | Embeddings, OCR and Suggest. It can run on this machine or another one on the network; see [Ollama server](#ollama-server) below. |
+| macOS | Tested on macOS 15 (Intel) | The launchd scripts are macOS-only. The server itself also runs on Linux and Windows; PDF rendering has native builds for all three. |
+
+MCP clients are optional: opencode, Claude Code, or anything that speaks MCP over HTTP.
+
+### Ollama models
+
+| Model | Needed for | Size on disk | Required? | Setting |
+|---|---|---|---|---|
+| `nomic-embed-text` | Embedding every chunk and every search query | 0.3 GB | **Yes** | `Rag:EmbeddingModel` |
+| `glm-ocr` | OCR of scanned PDF pages | 2.7 GB | Only for OCR | `Rag:Ocr:Model` |
+| `qwen3:8b`, or any chat model that can answer in JSON | **Suggest** on the Collections page | 5.2 GB | Only for Suggest | `Rag:Collections:SuggestModel` |
+
+```bash
+ollama pull nomic-embed-text
+ollama pull glm-ocr
+ollama pull qwen3:8b      # optional, for Suggest
+```
+
+Suggest only writes a sentence or two and a keyword list, so a small model is plenty; any instruction-following chat model works.
+
+Without `glm-ocr`, scanned PDFs stay at **needs OCR** and **Run OCR** is disabled with an explanation. Without the Suggest model, **Suggest** reports an error, and descriptions can still be typed by hand.
+
+### Ollama server
+
+- **Reachable over the network** when it runs on another machine. On that machine, set `OLLAMA_HOST=0.0.0.0` so Ollama listens beyond localhost. Point `Rag:OllamaUrl` at it (here `http://10.10.10.2:11434`).
+- **Room for two or three models at once.** During OCR batches the indexing lane embeds with `nomic-embed-text` while the analysis lane OCRs with `glm-ocr`. If a coding model is also loaded for opencode, that's three. Set `OLLAMA_MAX_LOADED_MODELS` to at least 2, or 3 to keep the coding model loaded, and make sure memory allows it. On `tb` (32 GB), for example: a 35B coding model for opencode ≈ 22 GB, `glm-ocr` ≈ 3–4 GB with its 16K context, `nomic-embed-text` ≈ 0.3 GB, and `qwen3:8b` ≈ 5–6 GB while Suggest runs.
+- **No server-side tuning is required.** RAGamuffin sends its own per-request options (context size, output cap, temperature, `keep_alive`); OCR asks Ollama to unload `glm-ocr` 5 minutes after the last page.
+
+### Disk space
+
+| What | Size |
+|---|---|
+| Docker images | about 3.3 GB (layout service 2.7 GB, Postgres + pgvector 0.6 GB) |
+| Layout models (Docker volume, downloaded on first start) | about 1.8 GB |
+| Database | about 0.5 GB for roughly 9,000 PDF pages and 28,000 chunks |
+| Uploaded originals (`data/files/`) | the size of your documents |
+
+Every setting is listed in [Configuration.md](Configuration.md).
+
 ## Running
 
 ```bash
@@ -29,14 +77,22 @@ dotnet run --project src/Ragamuffin   # applies migrations on startup
 
 To run it permanently as a launchd agent that starts at login, use `scripts/install-service.sh`. It publishes to `publish/` and logs to `data/logs/ragamuffin.log`. Re-run the script after code changes. `scripts/uninstall-service.sh` removes the agent. Docker Desktop must be set to start at login for the database to come back after a reboot.
 
-## opencode
+## Connecting agents (opencode, Claude Code)
 
-Add this to `~/.config/opencode/opencode.json`:
+**opencode** (V2 configuration): add this to `~/.config/opencode/opencode.json`:
 
 ```json
 "mcp": {
-  "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "enabled": true }
+  "servers": {
+    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false }
+  }
 }
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http --scope user rag http://localhost:5077/mcp
 ```
 
 Tools exposed (all read-only):
@@ -62,7 +118,7 @@ When a client connects, the server also sends **instructions** that clients add 
 
 - Create several collections at once, one name per line.
 - Rename by editing names in the table, then **Save changes**. All edits apply together or not at all, so swapping two names works. A rename carries over to every document in that collection.
-- Give each collection a **description** and **keywords**: these are what AI agents are told about the library (see the opencode section). **Suggest** drafts both with a local model (`Rag:Collections:SuggestModel`, default `qwen3.6-64k`) from the collection's titles and section headings; nothing is saved until **Save changes**.
+- Give each collection a **description** and **keywords**: these are what AI agents are told about the library (see [Connecting agents](#connecting-agents-opencode-claude-code)). **Suggest** drafts both with a local model (`Rag:Collections:SuggestModel`, default `qwen3:8b`) from the collection's titles and section headings; nothing is saved until **Save changes**.
 - Tick collections and **Remove selected…** to remove them. You choose whether their documents move to `(default)` or are deleted. A move is refused when `(default)` already has a document with the same name.
 - `(default)` is the built-in, unnamed collection. It can't be renamed or removed. In the API and MCP tools it is called `default`.
 
@@ -108,7 +164,7 @@ Either way, running headers, footers and page numbers are dropped (only when the
 
 **Timing on this Mac:** layout takes about 25–40 seconds per page. glm-ocr on `tb` adds a few seconds per region on scans.
 
-**Settings** are under `Rag:Ocr` and `Rag:Layout` in `appsettings.json`. Docker needs enough memory for the layout service, about 4–6 GB; 16 GB for Docker Desktop is comfortable.
+**Settings** are under `Rag:Ocr` and `Rag:Layout` (see [Configuration.md](Configuration.md#ocr-ragocr)). Docker needs enough memory for the layout service, about 4–6 GB; 16 GB for Docker Desktop is comfortable.
 
 "Looks like poor OCR" is a heuristic: invisible text over a scanned image, OCR software named in the PDF metadata, or garbled words. It only ranks pages for the dialog and never triggers OCR by itself. Ideas for later are in [Future Plans.md](Future%20Plans.md).
 
@@ -124,7 +180,7 @@ Either way, running headers, footers and page numbers are dropped (only when the
 - **Ingestion** runs in two independent lanes, each handling one job at a time: indexing (uploads and re-indexes) and OCR. Uploads finish within seconds even during a long OCR run. Uploading a new version of a document while it's being OCR'd cancels that run and indexes the new file. Search keeps working throughout, and a document being OCR'd stays searchable with its previous text.
 - **Extracted text** is cleaned before storage: NUL characters, stray control characters and broken surrogates are removed, because Postgres rejects them.
 
-Settings are in `src/Ragamuffin/appsettings.json` under `Rag`: Ollama URL, model, chunk sizes and the files directory. Switching to an embedding model with a different dimension needs a new migration, because the column is `vector(768)`.
+Settings are in `src/Ragamuffin/appsettings.json` under `Rag`; every one is listed in [Configuration.md](Configuration.md). Switching to an embedding model with a different dimension needs a new migration, because the column is `vector(768)`.
 
 ## Development
 

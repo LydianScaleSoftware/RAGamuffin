@@ -20,7 +20,7 @@ function render() {
         ? `<span class="muted" title="Built-in collection; cannot be renamed or removed">(default)</span>`
         : `<input class="rename" value="${esc(c.name)}" data-original="${esc(c.name)}" maxlength="100" spellcheck="false">`}</td>
       <td><textarea class="desc" rows="2" maxlength="1000" placeholder="What this collection covers…" data-original="${esc(c.description ?? "")}">${esc(c.description ?? "")}</textarea></td>
-      <td><input class="keywords" placeholder="comma, separated, terms" data-original="${esc(c.keywords.join(", "))}" value="${esc(c.keywords.join(", "))}" spellcheck="false"></td>
+      <td><textarea class="keywords" rows="2" placeholder="comma, separated, terms" spellcheck="false" data-original="${esc(c.keywords.join(", "))}">${esc(c.keywords.join(", "))}</textarea></td>
       <td><button class="small secondary suggest" ${c.documents ? "" : "disabled title=\"Add documents first\""}>Suggest</button></td>
       <td class="num">${c.documents}</td>
       <td class="num">${c.chunks}</td>
@@ -39,7 +39,7 @@ const selected = () => [...document.querySelectorAll("input.pick:checked")].map(
 // Description and keyword edits, keyed by the collection's current (saved) name.
 const normKeywords = (text) => text.split(/[,;\n]/).map((k) => k.trim()).filter(Boolean).join(", ");
 const detailFields = () => [...document.querySelectorAll("#cols tr")].map((row) => ({
-  row, name: row.dataset.name, desc: row.querySelector("textarea.desc"), keywords: row.querySelector("input.keywords"),
+  row, name: row.dataset.name, desc: row.querySelector("textarea.desc"), keywords: row.querySelector("textarea.keywords"),
 }));
 const detailChanged = (f) => f.desc.value.trim() !== f.desc.dataset.original || normKeywords(f.keywords.value) !== normKeywords(f.keywords.dataset.original);
 const pendingDetails = () => detailFields().filter(detailChanged).map((f) => ({
@@ -132,6 +132,41 @@ $("saveBtn").addEventListener("click", async () => {
   }
 });
 
+// Description and keywords expand while being edited. Keywords switch to one per line, which is easier to edit
+// than a long comma-separated line, and fold back to "a, b, c" afterwards (commas, semicolons and new lines all
+// separate keywords, so either form saves the same).
+const toLines = (text) => normKeywords(text).split(", ").filter(Boolean).join("\n");
+$("cols").addEventListener("focusin", (e) => {
+  const t = e.target;
+  if (t.matches("textarea.keywords")) {
+    t.value = toLines(t.value);
+    t.rows = Math.min(14, Math.max(6, t.value.split("\n").length + 1));
+    t.classList.add("editing");
+    // Reflowing to one per line moves text under the caret, so put it somewhere predictable: a new line at the end.
+    // (Deferred, because a mouse click positions the caret after the focus event.)
+    if (t.value) t.value += "\n";
+    setTimeout(() => t.setSelectionRange(t.value.length, t.value.length), 0);
+  } else if (t.matches("textarea.desc")) {
+    t.rows = 6;
+    t.classList.add("editing");
+  }
+});
+$("cols").addEventListener("focusout", (e) => {
+  const t = e.target;
+  if (t.matches("textarea.keywords")) {
+    t.value = normKeywords(t.value);
+    t.rows = 2;
+    t.classList.remove("editing");
+    updateButtons();
+  } else if (t.matches("textarea.desc")) {
+    t.rows = 2;
+    t.classList.remove("editing");
+  }
+});
+$("cols").addEventListener("keydown", (e) => {
+  if (e.target.matches("textarea.keywords, textarea.desc") && e.key === "Escape") e.target.blur();
+});
+
 // Suggest: a local model drafts the description and keywords; nothing is saved until "Save changes".
 $("cols").addEventListener("click", async (e) => {
   const btn = e.target.closest("button.suggest");
@@ -143,7 +178,7 @@ $("cols").addEventListener("click", async (e) => {
   try {
     const s = await postJson("/api/collections/suggest", { name: row.dataset.name });
     if (s.description) row.querySelector("textarea.desc").value = s.description;
-    if (s.keywords?.length) row.querySelector("input.keywords").value = s.keywords.join(", ");
+    if (s.keywords?.length) row.querySelector("textarea.keywords").value = s.keywords.join(", ");
     showMessage(`Drafted details for ${collectionLabel(row.dataset.name)}. Edit them if needed, then Save changes.`, "ok");
     updateButtons();
   } catch (err) {

@@ -34,7 +34,7 @@ public sealed class RagOptions
 public sealed class CollectionOptions
 {
     /// <summary>Ollama model that drafts collection descriptions and keywords ("Suggest" on the Collections page).</summary>
-    public string SuggestModel { get; set; } = "qwen3.6-64k";
+    public string SuggestModel { get; set; } = "qwen3:8b";
 
     public int SuggestTimeoutSeconds { get; set; } = 180;
 }
