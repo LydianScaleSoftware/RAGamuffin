@@ -84,10 +84,12 @@ To run it permanently as a launchd agent that starts at login, use `scripts/inst
 ```json
 "mcp": {
   "servers": {
-    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false }
+    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false, "codemode": false }
   }
 }
 ```
+
+`"codemode": false` makes models call RAGamuffin's tools directly. By default opencode wraps MCP tools in *Code Mode*, where the model writes a small JavaScript snippet to call each tool. Local models often get that wrong (for example, forgetting to `await` the result), and with only four tools Code Mode offers no benefit here.
 
 **Claude Code:**
 

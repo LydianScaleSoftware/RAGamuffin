@@ -100,7 +100,7 @@ Point the server at a URL and ingest that page, or a whole documentation site, i
 - **MCP prompts:** slash commands such as `/ragamuffin:research <topic>` that tell the agent to search, compare sources and cite them.
 
 - **Write tools:** MCP is read-only by design; documents are managed in the web UI. Adding `add_note` or `add_document` tools would let the opencode agent save findings.
-- **Code Mode:** opencode V2 calls MCP tools through Code Mode by default. In testing, qwen first tried a tool name that doesn't exist, then got it right. If calls are unreliable, set `"codemode": false` on the `rag` server.
+- **Code Mode (decided):** opencode V2 wraps MCP tools in Code Mode by default. With local models it caused failed calls: a nonexistent tool name, and calls without `await` ("JSON.stringify received an un-awaited Promise"). The recommended config now sets `"codemode": false`. Revisit if RAGamuffin grows many more tools, where Code Mode's batching might pay off.
 
 ## Operations
 

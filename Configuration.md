@@ -122,12 +122,14 @@ The script publishes into a clean `publish/` folder, then reloads the agent. Int
 ```json
 "mcp": {
   "servers": {
-    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false }
+    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false, "codemode": false }
   }
 }
 ```
 
 The key (`rag`) prefixes the tool names the model sees, e.g. `rag_search_documents`; short is better for local models.
+
+`"oauth": false` stops opencode from trying to sign in to the server, which needs no authentication. `"codemode": false` exposes the tools as ordinary tool calls. opencode's default *Code Mode* has the model write JavaScript to call MCP tools, which local models often get wrong: a common failure is calling a tool without `await`, which opencode reports as `JSON.stringify received an un-awaited Promise`. With only four tools, Code Mode's advantage (handling many tools efficiently) doesn't apply.
 
 **Claude Code:**
 
