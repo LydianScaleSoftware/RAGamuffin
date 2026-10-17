@@ -79,7 +79,9 @@ public sealed class IngestWorker(
         using (var scope = scopes.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
+            // Running job first (it has progress), then the rest in the order they were queued.
             var interrupted = await db.Documents.Where(d => d.Status == DocumentStatus.Pending || d.Status == DocumentStatus.Ocr)
+                .OrderBy(d => d.ProgressTotal == null).ThenBy(d => d.OcrRequestedAt).ThenBy(d => d.UpdatedAt)
                 .Select(d => new { d.Id, d.Status, d.OcrScope, d.LayoutMode }).ToListAsync(stoppingToken);
             foreach (var d in interrupted)
             {
@@ -223,15 +225,19 @@ public sealed class IngestWorker(
     {
         var byNumber = pages.ToDictionary(p => p.Page);
         var model = options.Value.Ocr.Model;
-        var done = work.Count(w => alreadyDone.Contains(w.Page));
+        // Pages finished before a restart no longer match the job's page selection (they have text now), so count them
+        // separately to keep progress continuous across resumes.
+        var remaining = work.Where(w => !alreadyDone.Contains(w.Page)).ToList();
+        var total = remaining.Count + alreadyDone.Count;
+        var done = alreadyDone.Count;
         var blank = new List<int>();
         var rotatedText = new List<int>();
         var wholePage = 0;
         var fallbackRegions = 0;
-        await SetProgressAsync(db, doc.Id, done, work.Count, stopping);
+        await SetProgressAsync(db, doc.Id, done, total, stopping);
         var started = DateTimeOffset.UtcNow;
 
-        foreach (var (number, isOcr) in work.Where(w => !alreadyDone.Contains(w.Page)))
+        foreach (var (number, isOcr) in remaining)
         {
             var page = byNumber[number];
             try
@@ -288,15 +294,15 @@ public sealed class IngestWorker(
             {
                 return done == 0
                     ? "Cancelled before any page finished."
-                    : $"Cancelled after {done} of {work.Count} pages; finished pages were kept.";
+                    : $"Cancelled after {done} of {total} pages; finished pages were kept.";
             }
             catch (Exception ex) when (ex is OcrException or LayoutException)
             {
-                return $"Stopped at page {number}: {ex.Message} ({done} of {work.Count} pages finished; they were kept.)";
+                return $"Stopped at page {number}: {ex.Message} ({done} of {total} pages finished; they were kept.)";
             }
 
             await db.SaveChangesAsync(stopping);
-            await SetProgressAsync(db, doc.Id, ++done, work.Count, stopping);
+            await SetProgressAsync(db, doc.Id, ++done, total, stopping);
         }
 
         log.LogInformation("Analyzed {Pages} pages of {Name} in {Seconds:F0}s", done, doc.Name, (DateTimeOffset.UtcNow - started).TotalSeconds);

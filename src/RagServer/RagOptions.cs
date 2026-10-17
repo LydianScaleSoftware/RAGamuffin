@@ -19,7 +19,8 @@ public sealed class RagOptions
     /// <summary>Where uploaded originals are kept. Relative paths resolve against the app's content root.</summary>
     public string FilesDirectory { get; set; } = "data/files";
 
-    public long MaxUploadBytes { get; set; } = 100 * 1024 * 1024;
+    /// <summary>Largest file accepted per upload. A request may carry up to ten times this (the UI sends files in tens).</summary>
+    public long MaxUploadBytes { get; set; } = 500L * 1024 * 1024;
 
     /// <summary>get_document truncates full text above this many characters.</summary>
     public int MaxDocumentChars { get; set; } = 60_000;

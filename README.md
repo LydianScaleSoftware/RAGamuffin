@@ -64,7 +64,7 @@ Tools exposed (all read-only):
 
 API uploads that name a collection that doesn't exist yet create it automatically.
 
-Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs. Binary files are rejected.
+Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs, up to 500 MB each (`Rag:MaxUploadBytes`). Binary files are rejected.
 
 ## OCR and layout analysis for PDFs
 
