@@ -66,6 +66,14 @@ API uploads that name a collection that doesn't exist yet create it automaticall
 
 Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs, up to 500 MB each (`Rag:MaxUploadBytes`). Binary files are rejected.
 
+**Stats page** (http://localhost:5077/stats.html):
+
+- **Totals per collection and overall:** documents, PDF pages, chunks, characters indexed, file and database size.
+- **Breakdowns:** document types and code languages; where each document's text comes from (original text, PDF embedded, embedded plus layout, OCR, mixed, no text yet); PDF pages by text source; status.
+- **Work remaining:** pages needing OCR, pages not yet laid out, with a rough time estimate; pages that look like poor old OCR; documents with notices.
+- **Other figures:** the largest documents and which OCR models read how many pages.
+- **Drill-downs:** almost every number links to the Documents page, filtered to the documents it counts (a banner shows the filter, with **Clear filter**). From there, **Select all shown** plus **Process…** or **Re-index…** fixes what the stats revealed.
+
 ## OCR and layout analysis for PDFs
 
 PDFs go through two optional, slower steps on top of normal indexing. Both run in the background analysis lane, one page at a time, and suit overnight batches.

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stats · RAGamuffin</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>RAGamuffin</h1>
+    <nav>
+      <a href="/">Documents</a>
+      <a href="/collections.html">Collections</a>
+      <a href="/stats.html" class="active">Stats</a>
+    </nav>
+    <span id="health" class="pill">checking…</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="row spread">
+        <h2>Overview</h2>
+        <div class="row"><span id="generated" class="muted small"></span><button id="refreshBtn" class="secondary small">Refresh</button></div>
+      </div>
+      <div id="tiles" class="tiles"></div>
+      <p id="facts" class="hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>Work remaining</h2>
+      <p class="hint">Click a number to see those documents on the Documents page, then use <strong>Select all shown</strong> and <strong>Process…</strong> or <strong>Re-index…</strong> to act on them.</p>
+      <div id="work" class="tiles"></div>
+    </section>
+
+    <section class="card">
+      <h2>By collection</h2>
+      <div class="table-wrap"><table id="overviewTable"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Document types</h2>
+      <div class="table-wrap"><table id="typesTable"></table></div>
+      <p id="languages" class="hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>Where the text comes from <span class="muted small">(documents)</span></h2>
+      <p class="hint">
+        <strong>Original text</strong>: Markdown, text and code files.
+        <strong>Embedded</strong>: the PDF's own text as stored.
+        <strong>Embedded + layout</strong>: the PDF's own words arranged by layout analysis.
+        <strong>OCR</strong>: read from scanned pages by local OCR.
+        <strong>Mixed</strong>: some pages embedded, some OCR'd.
+      </p>
+      <div class="table-wrap"><table id="originTable"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>PDF pages by text source <span class="muted small">(pages)</span></h2>
+      <div class="table-wrap"><table id="pagesTable"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Status</h2>
+      <div class="table-wrap"><table id="statusTable"></table></div>
+    </section>
+
+    <section class="card two-col">
+      <div>
+        <h2>Largest documents <span class="muted small">(by chunks)</span></h2>
+        <div class="table-wrap"><table id="largestTable"></table></div>
+      </div>
+      <div>
+        <h2>OCR models <span class="muted small">(pages read)</span></h2>
+        <div class="table-wrap"><table id="modelsTable"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="common.js"></script>
+  <script src="stats.js"></script>
+</body>
+</html>

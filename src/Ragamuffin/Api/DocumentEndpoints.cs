@@ -7,6 +7,7 @@ using Ragamuffin.Embeddings;
 using Ragamuffin.Ingestion;
 using Ragamuffin.Ocr;
 using Ragamuffin.Search;
+using Ragamuffin.Stats;
 
 namespace Ragamuffin.Api;
 
@@ -21,7 +22,8 @@ public static class DocumentEndpoints
             var docs = db.Documents.AsNoTracking();
             if (!string.IsNullOrWhiteSpace(collection)) docs = docs.Where(d => d.Collection == collection);
             if (!string.IsNullOrWhiteSpace(q)) docs = docs.Where(d => EF.Functions.ILike(d.Name, $"%{q}%"));
-            return await docs.OrderBy(d => d.Collection).ThenBy(d => d.Name)
+            var mixes = await StatsService.PageMixesAsync(db, ct);
+            var rows = await docs.OrderBy(d => d.Collection).ThenBy(d => d.Name)
                 .Select(d => new
                 {
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
@@ -30,6 +32,20 @@ public static class DocumentEndpoints
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                 })
                 .ToListAsync(ct);
+            // Text origin and raw-embedded page counts match the Stats page, so its drill-down links filter exactly.
+            return rows.Select(d =>
+            {
+                var mix = mixes.GetValueOrDefault(d.Id);
+                return new
+                {
+                    d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
+                    d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
+                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
+                    d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
+                    Origin = StatsService.Classify(d.ContentType, mix).ToString(),
+                    RawEmbeddedPages = mix?.Embedded ?? 0,
+                };
+            });
         });
 
         api.MapPost("/documents", async ([FromForm] IFormFileCollection files, [FromForm] string? collection,
@@ -102,6 +118,8 @@ public static class DocumentEndpoints
             await queue.EnqueueAsync(id, ct);
             return Results.Accepted();
         });
+
+        api.MapGet("/stats", (StatsService stats, CancellationToken ct) => stats.BuildAsync(ct));
 
         api.MapGet("/collections", (CollectionService collections, CancellationToken ct) => collections.ListAsync(ct));
 

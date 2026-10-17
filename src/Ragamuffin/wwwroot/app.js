@@ -29,9 +29,13 @@ async function loadCollections() {
 
   for (const id of ["filterCollection", "searchCollection"]) {
     const sel = $(id);
-    const current = sel.value;
+    const current = id === "filterCollection" && pendingCollectionFilter !== null ? pendingCollectionFilter : sel.value;
     sel.innerHTML = `<option value="">All collections</option>` + options(true);
     sel.value = cols.some((c) => c.name === current) ? current : "";
+  }
+  if (pendingCollectionFilter !== null) {
+    pendingCollectionFilter = null;
+    renderDocs();
   }
 }
 
@@ -126,6 +130,55 @@ function actionButtons(d) {
   return `<button class="small secondary" data-reindex="${d.id}" ${d.status === "pending" ? "disabled" : ""}>${label}</button>${del}`;
 }
 
+// ---------- drill-down filters (from the Stats page) ----------
+// /?fc=<collection>&filter=<kind>:<value>&q=<name>. "fc" pre-selects the collection filter; "filter" narrows further.
+const pageParams = new URLSearchParams(location.search);
+let pendingCollectionFilter = pageParams.get("fc");
+let drillFilter = pageParams.get("filter");
+if (pageParams.get("q")) $("filterName").value = pageParams.get("q");
+
+const ORIGIN_LABELS = {
+  OriginalText: "original text files", PdfEmbedded: "PDFs using embedded text", PdfEmbeddedLayout: "PDFs with layout-arranged text",
+  PdfOcr: "PDFs read entirely by OCR", PdfMixed: "PDFs mixing embedded and OCR text", PdfNoText: "PDFs with no text yet",
+};
+const STATUS_LABELS = { ready: "ready", needs_ocr: "needing OCR", failed: "failed", busy: "being processed" };
+
+/** [predicate, description] for a drill-down filter like "type:pdf", or null when there's none. */
+function drillPredicate(filter) {
+  if (!filter) return null;
+  const [kind, value] = filter.includes(":") ? filter.split(/:(.*)/s) : [filter, ""];
+  const pdf = (d) => d.contentType === "pdf";
+  switch (kind) {
+    case "type": return [(d) => d.contentType === value, `${value} documents`];
+    case "language": return [(d) => d.contentType === "code" && (d.language ?? "other") === value, `${value} code`];
+    case "origin": return [(d) => d.origin === value, ORIGIN_LABELS[value] ?? value];
+    case "status": return [value === "busy" ? busy : (d) => d.status === value, `documents ${STATUS_LABELS[value] ?? value}`];
+    case "notices": return [(d) => d.error && d.status !== "failed" && d.status !== "needs_ocr", "documents with notices"];
+    case "added": return [(d) => Date.now() - new Date(d.createdAt) < Number(value || 7) * 864e5, `added in the last ${value || 7} days`];
+    case "pages":
+      switch (value) {
+        case "needs-ocr": return [(d) => pdf(d) && (d.emptyPages > 0 || d.origin === "PdfNoText"), "PDFs with pages needing OCR"];
+        case "no-layout": return [(d) => pdf(d) && d.rawEmbeddedPages > 0, "PDFs with pages not yet laid out"];
+        case "layout": return [(d) => pdf(d) && d.layoutPages > 0, "PDFs with layout-analyzed pages"];
+        case "ocr": return [(d) => pdf(d) && d.ocrPages > 0, "PDFs with OCR'd pages"];
+        case "suspect": return [(d) => pdf(d) && d.suspectPages > 0, "PDFs with pages that look like poor old OCR"];
+      }
+  }
+  return [() => true, `unknown filter "${filter}"`];
+}
+
+function updateFilterBanner() {
+  const p = drillPredicate(drillFilter);
+  $("filterBanner").hidden = !p;
+  if (p) $("filterText").textContent = p[1];
+}
+
+$("clearFilter").addEventListener("click", () => {
+  drillFilter = null;
+  history.replaceState(null, "", location.pathname);
+  renderDocs();
+});
+
 // ---------- sorting ----------
 // Click a column header to sort ascending, again for descending. The default (no sort) is the server's order:
 // collection, then name. The choice is remembered per browser.
@@ -181,8 +234,10 @@ $("clearSort").addEventListener("click", () => setSort(null));
 function renderDocs() {
   const col = $("filterCollection").value;
   const name = $("filterName").value.toLowerCase();
-  const rows = sorted(docs.filter((d) => (!col || d.collection === col) && (!name || d.name.toLowerCase().includes(name))));
+  const drill = drillPredicate(drillFilter)?.[0] ?? (() => true);
+  const rows = sorted(docs.filter((d) => (!col || d.collection === col) && (!name || d.name.toLowerCase().includes(name)) && drill(d)));
   updateSortHeaders();
+  updateFilterBanner();
   $("docCount").textContent = `(${rows.length}${rows.length !== docs.length ? ` of ${docs.length}` : ""})`;
   $("docs").innerHTML = rows.length === 0
     ? `<tr><td colspan="9" class="muted">No documents yet — drop some files above.</td></tr>`

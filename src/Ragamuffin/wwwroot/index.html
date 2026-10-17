@@ -12,6 +12,7 @@
     <nav>
       <a href="/" class="active">Documents</a>
       <a href="/collections.html">Collections</a>
+      <a href="/stats.html">Stats</a>
     </nav>
     <span id="health" class="pill">checking…</span>
   </header>
@@ -55,6 +56,10 @@
           <button id="clearSort" class="secondary" hidden title="Back to the default order (collection, then name)">Clear sort</button>
           <button id="processBtn" class="secondary" title="Queue OCR and layout analysis for many PDFs, e.g. as an overnight batch">Process…</button>
         </div>
+      </div>
+      <div id="filterBanner" class="filter-banner" hidden>
+        <div><strong>Filtered from Stats:</strong> <span id="filterText"></span></div>
+        <button id="clearFilter" class="small secondary">Clear filter</button>
       </div>
       <div id="queuePanel" class="queue" hidden>
         <div><strong>Processing queue</strong> <span id="queueText"></span></div>

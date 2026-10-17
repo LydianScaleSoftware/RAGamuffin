@@ -193,3 +193,23 @@ th.sortable::after { content: "↕"; opacity: .35; margin-left: 4px; font-size: 
 th.sortable.sorted { color: var(--accent); }
 th.sortable.sorted[data-dir="asc"]::after { content: "▲"; opacity: 1; }
 th.sortable.sorted[data-dir="desc"]::after { content: "▼"; opacity: 1; }
+
+/* ---------- stats page ---------- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tile-value { font-size: 22px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.tile-sub { color: var(--muted); font-size: 11px; }
+td.num, th.num { font-variant-numeric: tabular-nums; }
+tr.total td { border-top: 2px solid var(--border); font-weight: 600; }
+a.drill { color: var(--accent); text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.drill:hover { border-bottom-style: solid; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.small { font-size: 12px; }
+
+/* ---------- drill-down filter banner (documents page) ---------- */
+.filter-banner {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}

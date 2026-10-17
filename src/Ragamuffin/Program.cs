@@ -11,6 +11,7 @@ using Ragamuffin.Layout;
 using Ragamuffin.Mcp;
 using Ragamuffin.Ocr;
 using Ragamuffin.Search;
+using Ragamuffin.Stats;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -48,6 +49,7 @@ builder.Services.AddSingleton<IngestQueue>();
 builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
+builder.Services.AddScoped<StatsService>();
 builder.Services.AddHostedService<IngestWorker>();
 
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = rag.MaxUploadBytes * 10);
