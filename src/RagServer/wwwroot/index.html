@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Documents</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>RAG Documents</h1>
+    <span id="health" class="pill">checking…</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Add documents</h2>
+      <div id="drop" class="drop">
+        <p>Drop files or folders here, or</p>
+        <div class="row">
+          <label class="button">Choose files<input id="fileInput" type="file" multiple hidden></label>
+          <label class="button secondary">Choose folder<input id="folderInput" type="file" webkitdirectory multiple hidden></label>
+        </div>
+        <p class="hint">Markdown, text, source code and PDF. Re-uploading a file with the same name replaces it.</p>
+      </div>
+      <div class="row">
+        <label for="collection">Collection</label>
+        <input id="collection" list="collectionList" value="default" autocomplete="off">
+        <datalist id="collectionList"></datalist>
+      </div>
+      <ul id="uploadLog" class="log"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Test search</h2>
+      <form id="searchForm" class="row">
+        <input id="searchQuery" placeholder="Ask something your documents answer…" class="grow" required>
+        <select id="searchCollection"><option value="">All collections</option></select>
+        <input id="searchK" type="number" min="1" max="50" value="8" title="Results">
+        <button type="submit">Search</button>
+      </form>
+      <div id="searchResults"></div>
+    </section>
+
+    <section class="card">
+      <div class="row spread">
+        <h2>Documents <span id="docCount" class="muted"></span></h2>
+        <div class="row">
+          <select id="filterCollection"><option value="">All collections</option></select>
+          <input id="filterName" placeholder="Filter by name">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Collection</th><th>Type</th><th class="num">Size</th><th class="num">Chunks</th><th>Status</th><th>Updated</th><th></th></tr>
+          </thead>
+          <tbody id="docs"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="viewer">
+    <div class="row spread">
+      <h2 id="viewerTitle"></h2>
+      <div class="row">
+        <a id="viewerFile" class="button secondary" target="_blank">Original</a>
+        <button id="viewerClose" class="secondary">Close</button>
+      </div>
+    </div>
+    <div class="tabs">
+      <button data-tab="chunks" class="tab active">Chunks</button>
+      <button data-tab="text" class="tab">Extracted text</button>
+    </div>
+    <div id="viewerBody"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
