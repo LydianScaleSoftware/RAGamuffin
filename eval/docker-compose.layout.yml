@@ -2,12 +2,12 @@
 services:
   docling:
     image: quay.io/docling-project/docling-serve-cpu:latest
-    container_name: rag-docling
+    container_name: ragamuffin-docling
     ports: ["127.0.0.1:5001:5001"]
     profiles: ["docling"]
   paddle:
     build: ./paddle
-    container_name: rag-paddle
+    container_name: ragamuffin-paddle
     volumes:
       - ./work:/work
       - paddle-models:/root/.paddlex

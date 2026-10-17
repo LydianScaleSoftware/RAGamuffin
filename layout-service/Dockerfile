@@ -1,4 +1,4 @@
-# Layout analysis service for RagServer: PaddleOCR PP-StructureV3 behind a small HTTP API.
+# Layout analysis service for Ragamuffin: PaddleOCR PP-StructureV3 behind a small HTTP API.
 FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 curl && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ \

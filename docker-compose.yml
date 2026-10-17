@@ -1,7 +1,9 @@
+name: ragamuffin
+
 services:
   db:
     image: pgvector/pgvector:pg18
-    container_name: rag-postgres
+    container_name: ragamuffin-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: rag
@@ -10,7 +12,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - rag-pgdata:/var/lib/postgresql
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
       interval: 5s
@@ -19,13 +21,13 @@ services:
 
   layout:
     build: ./layout-service
-    container_name: rag-layout
+    container_name: ragamuffin-layout
     restart: unless-stopped
     ports:
       - "127.0.0.1:5002:5002"
     volumes:
-      - rag-layout-models:/root/.paddlex
+      - layout-models:/root/.paddlex
 
 volumes:
-  rag-pgdata:
-  rag-layout-models:
+  pgdata:
+  layout-models:

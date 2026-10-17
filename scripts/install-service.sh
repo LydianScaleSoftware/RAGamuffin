@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Publishes RagServer and installs it as a launchd agent that starts at login
+# Publishes Ragamuffin and installs it as a launchd agent that starts at login
 # and restarts if it exits. Re-run after code changes to redeploy.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LABEL="com.mlong.ragserver"
+LABEL="com.lydianscale.ragamuffin"
 PUBLISH="$ROOT/publish"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOTNET="$(command -v dotnet)"
 
-dotnet publish "$ROOT/src/RagServer" -c Release -o "$PUBLISH" --nologo
+# Publish into a clean folder so files from older builds don't linger.
+rm -rf "$PUBLISH"
+dotnet publish "$ROOT/src/Ragamuffin" -c Release -o "$PUBLISH" --nologo
 mkdir -p "$ROOT/data/files" "$ROOT/data/logs"
 
 cat > "$PLIST" <<PLIST
@@ -21,7 +23,7 @@ cat > "$PLIST" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>$DOTNET</string>
-    <string>$PUBLISH/RagServer.dll</string>
+    <string>$PUBLISH/Ragamuffin.dll</string>
   </array>
   <key>WorkingDirectory</key><string>$PUBLISH</string>
   <key>EnvironmentVariables</key>
@@ -32,8 +34,8 @@ cat > "$PLIST" <<PLIST
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$ROOT/data/logs/ragserver.log</string>
-  <key>StandardErrorPath</key><string>$ROOT/data/logs/ragserver.log</string>
+  <key>StandardOutPath</key><string>$ROOT/data/logs/ragamuffin.log</string>
+  <key>StandardErrorPath</key><string>$ROOT/data/logs/ragamuffin.log</string>
 </dict>
 </plist>
 PLIST
@@ -45,5 +47,5 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "Installed $LABEL. Logs: $ROOT/data/logs/ragserver.log"
+echo "Installed $LABEL. Logs: $ROOT/data/logs/ragamuffin.log"
 echo "UI: http://localhost:5077"

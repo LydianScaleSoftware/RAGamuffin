@@ -9,7 +9,7 @@ METHODS = [
     ("docling", "Docling (standard)", "Docling layout model + tables + its default OCR"),
     ("paddle", "PP-StructureV3", "Paddle orientation + layout + its own OCR"),
     ("hybrid", "PP layout + glm-ocr", "Paddle orientation + layout; glm-ocr reads each region"),
-    ("new", "New RagServer pipeline", "Layout service + glm-ocr per region (scans) or the PDF's own words per region"),
+    ("new", "New Ragamuffin pipeline", "Layout service + glm-ocr per region (scans) or the PDF's own words per region"),
 ]
 PAGES = [
     ("A-toolbox1-p12", "Toolbox part 1, page 12", "Two-page spread scanned sideways; diagrams, photo, captions"),

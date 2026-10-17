@@ -1,10 +1,10 @@
-"""Page layout analysis for RagServer, wrapping PaddleOCR's PP-StructureV3.
+"""Page layout analysis for Ragamuffin, wrapping PaddleOCR's PP-StructureV3.
 
 POST /analyze  (multipart field "image": one rendered page)
   -> {"angle", "width", "height", "upright_png" (base64, only when rotated), "regions": [...]}
 
 Each region: {"label", "bbox": [x1, y1, x2, y2], "text", "table": {"html", "cells"} | null}, in reading order.
-Coordinates refer to the upright image. "text" is Paddle's own reading of the region, which RagServer uses only
+Coordinates refer to the upright image. "text" is Paddle's own reading of the region, which Ragamuffin uses only
 as a fallback (it prefers glm-ocr for scans and the PDF's own words for digital pages).
 """
 import base64
@@ -24,7 +24,7 @@ from paddleocr import PPStructureV3  # noqa: E402  (after the env var above)
 log = logging.getLogger("layout")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-app = FastAPI(title="RAG layout service")
+app = FastAPI(title="RAGamuffin layout service")
 _pipe = None
 _lock = threading.Lock()  # one page at a time; the models are not thread-safe and the CPU is the bottleneck
 

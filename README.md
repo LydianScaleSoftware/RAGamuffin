@@ -1,9 +1,9 @@
-# RAG server for opencode
+# RAGamuffin - A RAG server for opencode
 
 A small local retrieval service for opencode. You add documents in a web UI. They are chunked, embedded with `nomic-embed-text` on the Ollama box (`tb`, 10.10.10.2), and stored in Postgres with pgvector. opencode queries them through MCP over HTTP.
 
 ```
-web UI ──upload──▶ RagServer ──/api/embed──▶ Ollama (tb) nomic-embed-text
+web UI ──upload──▶ RAGamuffin ──/api/embed──▶ Ollama (tb) nomic-embed-text
                      │  ▲
                      ▼  │ hybrid search (vector + full-text, RRF)
               Postgres 18 + pgvector (Docker)
@@ -16,18 +16,18 @@ opencode ──MCP /mcp─────┘
 | Web UI | http://localhost:5077 |
 | MCP endpoint | http://localhost:5077/mcp |
 | Health | http://localhost:5077/api/health |
-| Database | Docker container `rag-postgres`, `localhost:5432`, db/user/password `rag` |
-| Layout service | Docker container `rag-layout`, `localhost:5002` (first start downloads its models, a few minutes) |
+| Database | Docker container `ragamuffin-postgres`, `localhost:5432`, db/user/password `rag` |
+| Layout service | Docker container `ragamuffin-layout`, `localhost:5002` (first start downloads its models, a few minutes) |
 | Uploaded originals | `data/files/` |
 
 ## Running
 
 ```bash
 docker compose up -d                 # Postgres + pgvector, and the layout service (both restart with Docker Desktop)
-dotnet run --project src/RagServer   # applies migrations on startup
+dotnet run --project src/Ragamuffin   # applies migrations on startup
 ```
 
-To run it permanently as a launchd agent that starts at login, use `scripts/install-service.sh`. It publishes to `publish/` and logs to `data/logs/ragserver.log`. Re-run the script after code changes. `scripts/uninstall-service.sh` removes the agent. Docker Desktop must be set to start at login for the database to come back after a reboot.
+To run it permanently as a launchd agent that starts at login, use `scripts/install-service.sh`. It publishes to `publish/` and logs to `data/logs/ragamuffin.log`. Re-run the script after code changes. `scripts/uninstall-service.sh` removes the agent. Docker Desktop must be set to start at login for the database to come back after a reboot.
 
 ## opencode
 
@@ -112,19 +112,19 @@ Either way, running headers, footers and page numbers are dropped (only when the
 - **Ingestion** runs in two independent lanes, each handling one job at a time: indexing (uploads and re-indexes) and OCR. Uploads finish within seconds even during a long OCR run. Uploading a new version of a document while it's being OCR'd cancels that run and indexes the new file. Search keeps working throughout, and a document being OCR'd stays searchable with its previous text.
 - **Extracted text** is cleaned before storage: NUL characters, stray control characters and broken surrogates are removed, because Postgres rejects them.
 
-Settings are in `src/RagServer/appsettings.json` under `Rag`: Ollama URL, model, chunk sizes and the files directory. Switching to an embedding model with a different dimension needs a new migration, because the column is `vector(768)`.
+Settings are in `src/Ragamuffin/appsettings.json` under `Rag`: Ollama URL, model, chunk sizes and the files directory. Switching to an embedding model with a different dimension needs a new migration, because the column is `vector(768)`.
 
 ## Development
 
 Test against the separate `rag_dev` database, so a dev instance doesn't pick up jobs queued in the live one:
 
 ```bash
-ConnectionStrings__Rag="Host=localhost;Port=5432;Database=rag_dev;Username=rag;Password=rag" Rag__FilesDirectory=/tmp/rag-dev-files dotnet run --project src/RagServer --urls http://localhost:5078
+ConnectionStrings__Rag="Host=localhost;Port=5432;Database=rag_dev;Username=rag;Password=rag" Rag__FilesDirectory=/tmp/rag-dev-files dotnet run --project src/Ragamuffin --urls http://localhost:5078
 ```
 
 ```bash
 dotnet test                                                       # chunker, extractor, fusion tests
-dotnet ef migrations add <Name> -p src/RagServer -o Data/Migrations
+dotnet ef migrations add <Name> -p src/Ragamuffin -o Data/Migrations
 ```
 
 ## License
