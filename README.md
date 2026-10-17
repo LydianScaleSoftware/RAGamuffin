@@ -126,3 +126,9 @@ ConnectionStrings__Rag="Host=localhost;Port=5432;Database=rag_dev;Username=rag;P
 dotnet test                                                       # chunker, extractor, fusion tests
 dotnet ef migrations add <Name> -p src/RagServer -o Data/Migrations
 ```
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+Third-party components keep their own licenses. That includes the NuGet packages, PaddleOCR and its models in the layout service, and the Ollama models it uses (`nomic-embed-text`, `glm-ocr`), which are downloaded separately and not part of this repository.
