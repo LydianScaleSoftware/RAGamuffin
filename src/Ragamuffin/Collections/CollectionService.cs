@@ -4,7 +4,10 @@ using Ragamuffin.Ingestion;
 
 namespace Ragamuffin.Collections;
 
-public sealed record CollectionInfo(string Name, bool IsDefault, int Documents, int Chunks, DateTimeOffset CreatedAt);
+public sealed record CollectionInfo(string Name, bool IsDefault, int Documents, int Chunks, DateTimeOffset CreatedAt,
+    string? Description, List<string> Keywords);
+
+public sealed record CollectionDetails(string Name, string? Description, List<string>? Keywords);
 
 public sealed record CreateResult(string Name, string Outcome, string? Error = null);
 
@@ -25,7 +28,7 @@ public sealed class CollectionService(RagDbContext db, FileStore files)
             .Select(c => new CollectionInfo(c.Name, c.Name == Collection.Default,
                 stats.GetValueOrDefault(c.Name)?.Documents ?? 0,
                 stats.GetValueOrDefault(c.Name)?.Chunks ?? 0,
-                c.CreatedAt))
+                c.CreatedAt, c.Description, c.Keywords))
             .OrderByDescending(c => c.IsDefault)
             .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -47,6 +50,22 @@ public sealed class CollectionService(RagDbContext db, FileStore files)
         }
         await db.SaveChangesAsync(ct);
         return results;
+    }
+
+    /// <summary>Saves descriptions and keywords (by current name). Returns the names that don't exist.</summary>
+    public async Task<List<string>> UpdateDetailsAsync(IReadOnlyList<CollectionDetails> items, CancellationToken ct)
+    {
+        var names = items.Select(i => CollectionRules.Normalize(i.Name)).ToList();
+        var rows = await db.Collections.Where(c => names.Contains(c.Name)).ToDictionaryAsync(c => c.Name, ct);
+        var missing = new List<string>();
+        foreach (var item in items)
+        {
+            if (!rows.TryGetValue(CollectionRules.Normalize(item.Name), out var row)) { missing.Add(item.Name); continue; }
+            row.Description = CollectionRules.NormalizeDescription(item.Description);
+            row.Keywords = CollectionRules.NormalizeKeywords(item.Keywords);
+        }
+        await db.SaveChangesAsync(ct);
+        return missing;
     }
 
     /// <summary>Applies all renames in one transaction, or none of them if any is invalid.</summary>

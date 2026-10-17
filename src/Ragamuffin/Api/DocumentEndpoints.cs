@@ -126,6 +126,20 @@ public static class DocumentEndpoints
         api.MapPost("/collections", async (CreateCollectionsRequest req, CollectionService collections, CancellationToken ct) =>
             Results.Ok(await collections.CreateAsync(req.Names ?? [], ct)));
 
+        api.MapPost("/collections/details", async (UpdateCollectionDetailsRequest req, CollectionService collections, CancellationToken ct) =>
+        {
+            var missing = await collections.UpdateDetailsAsync(req.Items ?? [], ct);
+            return missing.Count == 0
+                ? Results.NoContent()
+                : Results.BadRequest(new { errors = missing.Select(m => $"Collection \"{m}\" does not exist.").ToList() });
+        });
+
+        api.MapPost("/collections/suggest", async (SuggestCollectionRequest req, CollectionSuggester suggester, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await suggester.SuggestAsync(CollectionRules.Normalize(req.Name), ct)); }
+            catch (SuggestionException ex) { return Results.BadRequest(new { errors = new[] { ex.Message } }); }
+        });
+
         api.MapPost("/collections/rename", async (RenameCollectionsRequest req, CollectionService collections, CancellationToken ct) =>
         {
             var errors = await collections.RenameAsync(req.Renames ?? [], ct);
@@ -187,3 +201,7 @@ public sealed record RenameCollectionsRequest(List<CollectionRename>? Renames);
 
 /// <summary><c>Documents</c> is "move" (to the default collection) or "delete".</summary>
 public sealed record RemoveCollectionsRequest(List<string>? Names, string? Documents);
+
+public sealed record UpdateCollectionDetailsRequest(List<CollectionDetails>? Items);
+
+public sealed record SuggestCollectionRequest(string Name);

@@ -19,6 +19,8 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
         {
             e.ToTable("collections");
             e.Property(c => c.Name).HasMaxLength(200);
+            e.Property(c => c.Description).HasMaxLength(1000);
+            e.Property(c => c.Keywords).HasDefaultValueSql("'{}'::text[]");
         });
 
         model.Entity<Document>(e =>

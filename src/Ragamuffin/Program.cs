@@ -43,6 +43,12 @@ builder.Services.AddHttpClient<LayoutClient>((sp, http) =>
     http.Timeout = Timeout.InfiniteTimeSpan; // each page has its own timeout (Rag:Layout:PageTimeoutSeconds)
 });
 builder.Services.AddTransient<PageAnalyzer>();
+builder.Services.AddHttpClient<CollectionSuggester>((sp, http) =>
+{
+    var opt = sp.GetRequiredService<IOptions<RagOptions>>().Value;
+    http.BaseAddress = new Uri(opt.OllamaUrl.TrimEnd('/') + "/");
+    http.Timeout = Timeout.InfiniteTimeSpan; // the suggester applies its own timeout
+});
 
 builder.Services.AddSingleton<FileStore>();
 builder.Services.AddSingleton<IngestQueue>();
@@ -50,13 +56,20 @@ builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<StatsService>();
+builder.Services.AddScoped<LibraryGuide>();
 builder.Services.AddHostedService<IngestWorker>();
 
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = rag.MaxUploadBytes * 10);
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = rag.MaxUploadBytes * 10);
 
 builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "ragamuffin", Title = "RAGamuffin", Version = "1.0.0" })
-    .WithHttpTransport(o => o.Stateless = true)
+    .WithHttpTransport(o =>
+    {
+        o.Stateless = true;
+        // Describe the library (collections, descriptions, keywords) to each client as it connects.
+        o.ConfigureSessionOptions = async (http, server, ct) =>
+            server.ServerInstructions = await http.RequestServices.GetRequiredService<LibraryGuide>().InstructionsAsync(ct);
+    })
     .WithTools<RagTools>();
 
 var app = builder.Build();

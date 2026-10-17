@@ -27,6 +27,26 @@ public sealed class RagOptions
 
     public OcrOptions Ocr { get; set; } = new();
     public LayoutOptions Layout { get; set; } = new();
+    public CollectionOptions Collections { get; set; } = new();
+    public McpOptions Mcp { get; set; } = new();
+}
+
+public sealed class CollectionOptions
+{
+    /// <summary>Ollama model that drafts collection descriptions and keywords ("Suggest" on the Collections page).</summary>
+    public string SuggestModel { get; set; } = "qwen3.6-64k";
+
+    public int SuggestTimeoutSeconds { get; set; } = 180;
+}
+
+/// <summary>What the MCP server tells agents about the library.</summary>
+public sealed class McpOptions
+{
+    /// <summary>
+    /// Token budget for each block of text an agent receives about the library: the server instructions added to its
+    /// system prompt, and the list_collections tool's answer. Estimated at about 3.5 characters per token.
+    /// </summary>
+    public int ContextTokens { get; set; } = 512;
 }
 
 /// <summary>Page layout analysis (orientation, regions, reading order, tables) by the layout service.</summary>

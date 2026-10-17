@@ -9,8 +9,14 @@ using Ragamuffin.Search;
 namespace Ragamuffin.Mcp;
 
 [McpServerToolType]
-public sealed class RagTools(RagDbContext db, SearchService search, IOptions<RagOptions> options)
+public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide guide, IOptions<RagOptions> options)
 {
+    [McpServerTool(Name = "list_collections", ReadOnly = true)]
+    [Description("Describe the collections in the user's document library: what each covers, keywords, size and example titles. Use it to choose a collection for search_documents.")]
+    public Task<string> ListCollections(
+        [Description("Only describe this collection, in more detail. Omit to describe all of them.")] string? collection = null,
+        CancellationToken ct = default) => guide.ListCollectionsAsync(collection, ct);
+
     [McpServerTool(Name = "search_documents", ReadOnly = true)]
     [Description("Search the user's indexed documents (notes, docs, source code, PDFs) and return the most relevant passages with their source file and line/page. Use this whenever a question may be answered by the user's own documents. Phrase the query as a natural-language question or include exact identifiers.")]
     public async Task<string> SearchDocuments(

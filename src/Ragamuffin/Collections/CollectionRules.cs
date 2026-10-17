@@ -9,7 +9,32 @@ public static class CollectionRules
 {
     public const int MaxNameLength = 100;
 
+    public const int MaxDescriptionLength = 1000;
+    public const int MaxKeywords = 20;
+    public const int MaxKeywordLength = 60;
+
     public static string Normalize(string? name) => (name ?? "").Trim();
+
+    /// <summary>Trims, drops blanks and duplicates (ignoring case), and caps the count and length of keywords.</summary>
+    public static List<string> NormalizeKeywords(IEnumerable<string>? keywords) => (keywords ?? [])
+        .Select(k => string.Join(' ', (k ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)))
+        .Where(k => k.Length > 0)
+        .Select(k => k.Length > MaxKeywordLength ? k[..MaxKeywordLength].TrimEnd() : k)
+        .DistinctBy(k => k.ToLowerInvariant())
+        .Take(MaxKeywords)
+        .ToList();
+
+    /// <summary>Keywords typed as one comma- or semicolon-separated line.</summary>
+    public static List<string> ParseKeywords(string? text) =>
+        NormalizeKeywords((text ?? "").Split([',', ';', '\n']));
+
+    /// <summary>Collapses whitespace and caps the length; null when empty.</summary>
+    public static string? NormalizeDescription(string? text)
+    {
+        var t = string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (t.Length == 0) return null;
+        return t.Length > MaxDescriptionLength ? t[..MaxDescriptionLength].TrimEnd() : t;
+    }
 
     public static bool IsDefault(string name) =>
         string.Equals(Normalize(name), Collection.Default, StringComparison.OrdinalIgnoreCase);

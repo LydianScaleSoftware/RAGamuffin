@@ -213,3 +213,12 @@ a.drill:hover { border-bottom-style: solid; }
   margin-top: 12px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 8px;
   background: color-mix(in srgb, var(--warn) 8%, transparent);
 }
+
+/* ---------- collection details ---------- */
+textarea.desc {
+  width: 100%; min-width: 260px; margin: 0; font: 13px/1.4 inherit; font-family: inherit; resize: vertical;
+  background: transparent; border-color: transparent;
+}
+input.keywords { width: 100%; min-width: 200px; background: transparent; border-color: transparent; }
+textarea.desc:hover, textarea.desc:focus, input.keywords:hover, input.keywords:focus { border-color: var(--border); background: var(--bg); }
+textarea.desc.changed, input.keywords.changed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }

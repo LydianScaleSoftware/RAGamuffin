@@ -12,4 +12,10 @@ public sealed class Collection
     public int Id { get; set; }
     public required string Name { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>What the collection holds, in a sentence or two; shown to agents in the MCP server instructions.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Topics and terms that help an agent decide to search this collection.</summary>
+    public List<string> Keywords { get; set; } = [];
 }

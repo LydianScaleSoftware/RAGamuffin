@@ -96,6 +96,9 @@ Point the server at a URL and ingest that page, or a whole documentation site, i
 
 ## MCP and opencode
 
+- **Collection names in the `collection` parameter:** the tool's parameter description could list the valid collection names (it needs a custom tool listing, since tool descriptions are normally fixed at startup). Worth adding if agents guess names that don't exist.
+- **MCP prompts:** slash commands such as `/ragamuffin:research <topic>` that tell the agent to search, compare sources and cite them.
+
 - **Write tools:** MCP is read-only by design; documents are managed in the web UI. Adding `add_note` or `add_document` tools would let the opencode agent save findings.
 - **Code Mode:** opencode V2 calls MCP tools through Code Mode by default. In testing, qwen first tried a tool name that doesn't exist, then got it right. If calls are unreliable, set `"codemode": false` on the `rag` server.
 

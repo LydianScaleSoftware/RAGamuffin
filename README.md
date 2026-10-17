@@ -44,6 +44,9 @@ Tools exposed (all read-only):
 - `search_documents(query, top_k=8, collection?)`: ranked passages with file, line range or page, and section.
 - `list_documents(collection?)`
 - `get_document(name_or_id, collection?)`: full extracted text, truncated above 60k characters.
+- `list_collections(collection?)`: what each collection covers (description, keywords), its size and example titles.
+
+When a client connects, the server also sends **instructions** that clients add to the model's system prompt: when to use the tools, plus each collection's name, size, description and keywords. They're generated live from the Collections page, so the agent knows what the library holds without notes in `AGENTS.md` or `CLAUDE.md`. Both the instructions and the `list_collections` answer are kept within 512 tokens (`Rag:Mcp:ContextTokens`). Detail is trimmed first (keywords, then description length), and only then are the smallest collections summarized as "…and N more". Clients read instructions when they connect, so edits show up in the next session.
 
 ## Managing documents
 
@@ -58,7 +61,8 @@ Tools exposed (all read-only):
 **Collections page** (http://localhost:5077/collections.html):
 
 - Create several collections at once, one name per line.
-- Rename by editing names in the table, then **Save renames**. All edits apply together or not at all, so swapping two names works. A rename carries over to every document in that collection.
+- Rename by editing names in the table, then **Save changes**. All edits apply together or not at all, so swapping two names works. A rename carries over to every document in that collection.
+- Give each collection a **description** and **keywords**: these are what AI agents are told about the library (see the opencode section). **Suggest** drafts both with a local model (`Rag:Collections:SuggestModel`, default `qwen3.6-64k`) from the collection's titles and section headings; nothing is saved until **Save changes**.
 - Tick collections and **Remove selected…** to remove them. You choose whether their documents move to `(default)` or are deleted. A move is refused when `(default)` already has a document with the same name.
 - `(default)` is the built-in, unnamed collection. It can't be renamed or removed. In the API and MCP tools it is called `default`.
 
