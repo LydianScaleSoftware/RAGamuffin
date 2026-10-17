@@ -40,6 +40,8 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
             e.ToTable("document_pages");
             e.HasIndex(p => new { p.DocumentId, p.Page }).IsUnique();
             e.Ignore(p => p.EffectiveText);
+            e.Ignore(p => p.EmbeddedSource);
+            e.Property(p => p.LayoutJson).HasColumnType("jsonb");
         });
 
         model.Entity<Chunk>(e =>

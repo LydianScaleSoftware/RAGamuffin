@@ -46,10 +46,25 @@ $("collection").addEventListener("change", () => {
 
 // ---------- documents ----------
 let ocrStatus = { available: false, model: "", reason: "checking…" };
+let layoutStatus = { available: false, reason: "checking…" };
+const selected = new Set();
 const busy = (d) => d.status === "pending" || d.status === "ocr";
+const textPages = (d) => Math.max(0, d.pageCount - d.emptyPages);
 
 async function loadOcrStatus() {
-  try { ocrStatus = await api("/api/ocr"); } catch { ocrStatus = { available: false, model: "", reason: "Server unreachable" }; }
+  const [o, l] = await Promise.all([
+    api("/api/ocr").catch(() => ({ available: false, model: "", reason: "Server unreachable" })),
+    api("/api/layout").catch(() => ({ available: false, reason: "Server unreachable" })),
+  ]);
+  ocrStatus = o;
+  layoutStatus = l;
+}
+
+/** What an analysis job is doing, for the status column. */
+function jobLabel(d) {
+  if (d.ocrScope && d.layoutMode) return "Analyzing";
+  if (d.layoutMode) return "Layout";
+  return "OCR";
 }
 
 async function loadDocs() {
@@ -65,9 +80,9 @@ function statusCell(d) {
     case "pending":
       return `<span class="status-pending">indexing…</span>`;
     case "ocr": {
-      if (d.progressTotal == null) return `<span class="status-ocr">OCR queued…</span>`;
+      if (d.progressTotal == null) return `<span class="status-ocr">${jobLabel(d)} queued…</span>`;
       const pct = d.progressTotal ? Math.round(100 * d.progressDone / d.progressTotal) : 0;
-      return `<span class="status-ocr">OCR ${d.progressDone}/${d.progressTotal}</span>
+      return `<span class="status-ocr">${jobLabel(d)} ${d.progressDone}/${d.progressTotal}</span>
         <span class="progress" title="${pct}%"><span style="width:${pct}%"></span></span>`;
     }
     case "needs_ocr":
@@ -81,6 +96,11 @@ function statusCell(d) {
         const tip = `Text from local OCR · ${d.ocrModel ?? "unknown model"} · ${d.ocrPages} of ${d.pageCount} pages` +
           (d.ocrAt ? ` · ${when(d.ocrAt)}` : "");
         badge = ` <span class="badge ocr" title="${esc(tip)}">OCR${all ? "" : ` ${d.ocrPages}/${d.pageCount}`}</span>`;
+      }
+      if (d.layoutPages > 0) {
+        const all = d.layoutPages >= textPages(d);
+        const tip = `Layout analyzed: ${d.layoutPages} of ${textPages(d)} pages with text (reading order, tables, headers and footers removed)`;
+        badge += ` <span class="badge layout" title="${esc(tip)}">Layout${all ? "" : ` ${d.layoutPages}/${textPages(d)}`}</span>`;
       }
       const empty = d.contentType === "pdf" && d.emptyPages > 0
         ? ` <span class="badge muted-badge" title="${d.emptyPages} page${d.emptyPages > 1 ? "s have" : " has"} no text; use Re-index… to OCR them">${d.emptyPages} blank</span>`
@@ -106,15 +126,69 @@ function actionButtons(d) {
   return `<button class="small secondary" data-reindex="${d.id}" ${d.status === "pending" ? "disabled" : ""}>${label}</button>${del}`;
 }
 
+// ---------- sorting ----------
+// Click a column header to sort ascending, again for descending. The default (no sort) is the server's order:
+// collection, then name. The choice is remembered per browser.
+const SORT_KEY = "rag.docSort";
+let sort = (() => { try { return JSON.parse(storageGet(SORT_KEY)) ?? null; } catch { return null; } })();
+
+// Status order runs from "needs attention" to "done".
+const STATUS_RANK = { failed: 0, needs_ocr: 1, ocr: 2, pending: 3, ready: 4 };
+const SORT_VALUES = {
+  name: (d) => d.name.toLowerCase(),
+  collection: (d) => collectionLabel(d.collection).toLowerCase(),
+  type: (d) => (d.language ?? d.contentType).toLowerCase(),
+  size: (d) => d.sizeBytes,
+  chunks: (d) => d.chunkCount,
+  status: (d) => STATUS_RANK[d.status] ?? 9,
+  updated: (d) => d.updatedAt,
+};
+
+function sorted(rows) {
+  if (!sort || !SORT_VALUES[sort.column]) return rows;
+  const value = SORT_VALUES[sort.column];
+  const dir = sort.dir === "desc" ? -1 : 1;
+  // Ties keep the default order, so equal values stay grouped by collection and name.
+  return rows
+    .map((d, i) => ({ d, i, v: value(d) }))
+    .sort((a, b) => (a.v < b.v ? -dir : a.v > b.v ? dir : a.i - b.i))
+    .map((x) => x.d);
+}
+
+function setSort(next) {
+  sort = next;
+  storageSet(SORT_KEY, JSON.stringify(sort));
+  renderDocs();
+}
+
+function updateSortHeaders() {
+  document.querySelectorAll("th.sortable").forEach((th) => {
+    const active = sort?.column === th.dataset.sort;
+    th.classList.toggle("sorted", active);
+    th.dataset.dir = active ? sort.dir : "";
+    th.setAttribute("aria-sort", active ? (sort.dir === "desc" ? "descending" : "ascending") : "none");
+    th.title = active ? `Sorted ${sort.dir === "desc" ? "descending" : "ascending"}; click to reverse` : "Click to sort";
+  });
+  $("clearSort").hidden = !sort;
+}
+
+document.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
+  const column = th.dataset.sort;
+  setSort({ column, dir: sort?.column === column && sort.dir === "asc" ? "desc" : "asc" });
+}));
+$("clearSort").addEventListener("click", () => setSort(null));
+
 function renderDocs() {
   const col = $("filterCollection").value;
   const name = $("filterName").value.toLowerCase();
-  const rows = docs.filter((d) => (!col || d.collection === col) && (!name || d.name.toLowerCase().includes(name)));
+  const rows = sorted(docs.filter((d) => (!col || d.collection === col) && (!name || d.name.toLowerCase().includes(name))));
+  updateSortHeaders();
   $("docCount").textContent = `(${rows.length}${rows.length !== docs.length ? ` of ${docs.length}` : ""})`;
   $("docs").innerHTML = rows.length === 0
-    ? `<tr><td colspan="8" class="muted">No documents yet — drop some files above.</td></tr>`
+    ? `<tr><td colspan="9" class="muted">No documents yet — drop some files above.</td></tr>`
     : rows.map((d) => `
       <tr>
+        <td class="check">${d.contentType === "pdf" ? `<input type="checkbox" class="pick" data-id="${d.id}" ${selected.has(d.id) ? "checked" : ""}>` : ""}</td>
         <td class="name"><a data-view="${d.id}">${esc(d.name)}</a></td>
         <td>${esc(collectionLabel(d.collection))}</td>
         <td>${esc(d.language ?? d.contentType)}</td>
@@ -162,10 +236,111 @@ $("docs").addEventListener("click", async (e) => {
 $("filterCollection").addEventListener("change", renderDocs);
 $("filterName").addEventListener("input", renderDocs);
 
+// Row selection (PDFs only) for batch processing.
+$("docs").addEventListener("change", (e) => {
+  if (!e.target.matches("input.pick")) return;
+  if (e.target.checked) selected.add(e.target.dataset.id); else selected.delete(e.target.dataset.id);
+});
+$("selectAllDocs").addEventListener("change", (e) => {
+  document.querySelectorAll("#docs input.pick").forEach((c) => {
+    c.checked = e.target.checked;
+    if (c.checked) selected.add(c.dataset.id); else selected.delete(c.dataset.id);
+  });
+});
+
 async function refresh() {
   await loadOcrStatus();
-  await Promise.all([loadDocs(), loadCollections()]);
+  await Promise.all([loadDocs(), loadCollections(), loadQueue()]);
 }
+
+// ---------- processing queue ----------
+async function loadQueue() {
+  const q = await api("/api/queue").catch(() => null);
+  const panel = $("queuePanel");
+  if (!q || (!q.running && q.queued.length === 0)) { panel.hidden = true; return; }
+  const parts = [];
+  if (q.running) parts.push(`now: ${esc(q.running.name.split("/").pop())} (${jobLabel(q.running)} ${q.running.progressDone ?? 0}/${q.running.progressTotal})`);
+  if (q.queued.length) parts.push(`${q.queued.length} queued (about ${q.queuedPages.toLocaleString()} page${q.queuedPages === 1 ? "" : "s"})`);
+  $("queueText").innerHTML = "· " + parts.join(" · ");
+  panel.hidden = false;
+}
+
+$("queueCancel").addEventListener("click", async () => {
+  if (!confirm("Cancel the running job and everything queued? Finished pages are kept.")) return;
+  await api("/api/queue/cancel", { method: "POST" });
+  refresh();
+});
+
+// ---------- batch processing ----------
+function batchRequest(dryRun) {
+  const scope = document.querySelector('input[name="batchScope"]:checked').value;
+  return {
+    documentIds: scope === "selected" ? [...selected] : null,
+    collection: scope === "collection" ? $("filterCollection").value || null : null,
+    ocr: $("batchOcr").checked,
+    layout: $("batchLayout").checked,
+    redoLayout: $("batchLayout").checked && $("batchRedo").checked,
+    dryRun,
+  };
+}
+
+async function previewBatch() {
+  const out = $("batchPreview");
+  $("batchRedo").disabled = !$("batchLayout").checked;
+  if (!$("batchOcr").checked && !$("batchLayout").checked) {
+    out.className = "message bad";
+    out.textContent = "Choose OCR, layout analysis or both.";
+    $("batchQueue").disabled = true;
+    return;
+  }
+  out.className = "message";
+  out.textContent = "Counting…";
+  try {
+    const r = await postJson("/api/batch", batchRequest(true));
+    const hours = r.totalPages * 45 / 3600;
+    const lines = [r.documents.length
+      ? `${r.documents.length} document${r.documents.length > 1 ? "s" : ""}, about ${r.totalPages.toLocaleString()} pages — roughly ${hours < 1 ? Math.max(1, Math.round(hours * 60)) + " minutes" : hours.toFixed(1) + " hours"}.`
+      : "Nothing to do: no matching documents need this."];
+    if (r.skippedBusy) lines.push(`${r.skippedBusy} already being processed (skipped).`);
+    if (r.ocrUnavailable) lines.push(`OCR unavailable: ${ocrStatus.reason}`);
+    if (r.layoutUnavailable) lines.push(`Layout analysis unavailable: ${layoutStatus.reason}`);
+    out.innerHTML = lines.map(esc).join("<br>");
+    out.className = r.ocrUnavailable || r.layoutUnavailable ? "message bad" : "message";
+    $("batchQueue").disabled = r.documents.length === 0;
+  } catch (err) {
+    out.className = "message bad";
+    out.textContent = err.message;
+    $("batchQueue").disabled = true;
+  }
+}
+
+$("processBtn").addEventListener("click", async () => {
+  await loadOcrStatus();
+  const col = $("filterCollection").value;
+  $("batchSelectedLabel").textContent = `Selected documents (${selected.size})`;
+  $("batchCollectionLabel").textContent = col ? `All PDFs in ${collectionLabel(col)}` : "All PDFs in every collection";
+  const sel = document.querySelector('input[name="batchScope"][value="selected"]');
+  sel.disabled = selected.size === 0;
+  document.querySelector(`input[name="batchScope"][value="${selected.size ? "selected" : "collection"}"]`).checked = true;
+  $("batchDialog").returnValue = "";
+  $("batchDialog").showModal();
+  previewBatch();
+});
+
+$("batchForm").addEventListener("change", previewBatch);
+
+$("batchDialog").addEventListener("close", async () => {
+  if ($("batchDialog").returnValue !== "confirm") return;
+  try {
+    const r = await postJson("/api/batch", batchRequest(false));
+    selected.clear();
+    $("selectAllDocs").checked = false;
+    alert(`Queued ${r.queued} document${r.queued === 1 ? "" : "s"} (about ${r.totalPages.toLocaleString()} pages).`);
+  } catch (err) {
+    alert(err.message);
+  }
+  refresh();
+});
 
 // ---------- PDF re-index dialog ----------
 let reindexDoc = null;
@@ -177,7 +352,7 @@ async function openReindexDialog(id) {
   $("reindexTitle").textContent = d.name;
 
   const hasOcr = d.ocrPages > 0;
-  $("reindexKeepLabel").textContent = hasOcr ? "Re-index, keeping OCR'd pages" : "Re-index from the PDF's embedded text";
+  $("reindexKeepLabel").textContent = hasOcr || d.layoutPages ? "Re-index, keeping OCR and layout results" : "Re-index from the PDF's embedded text";
   $("reindexKeepHint").textContent = hasOcr
     ? `Re-reads the embedded text. The ${d.ocrPages} OCR'd page${d.ocrPages > 1 ? "s keep" : " keeps"} their OCR text.`
     : "Re-reads the text stored in the PDF.";
@@ -199,6 +374,17 @@ async function openReindexDialog(id) {
     ? `Roughly 5–20 seconds per page on the Ollama server. Embedded text is kept and can be restored.${modelNote}`
     : `Unavailable: ${ocrStatus.reason}`;
   updateOcrEstimate();
+
+  const layoutRadio = $("reindexForm").querySelector('input[value="layout"]');
+  layoutRadio.disabled = !layoutStatus.available || textPages(d) === 0;
+  $("layoutRedo").disabled = layoutRadio.disabled;
+  $("layoutRedo").checked = false;
+  $("reindexLayoutHint").textContent = !layoutStatus.available
+    ? `Unavailable: ${layoutStatus.reason}`
+    : textPages(d) === 0
+      ? "No pages with embedded text."
+      : `Arranges the PDF's own text by layout: reading order, real tables, headers and footers removed. ` +
+        `${d.layoutPages} of ${textPages(d)} pages with text analyzed so far. Roughly 30–60 seconds per page.`;
 
   const revert = $("reindexRevertRow");
   revert.hidden = revertablePages === 0;
@@ -233,6 +419,7 @@ $("reindexDialog").addEventListener("close", async () => {
     if (choice === "keep") await api(`/api/documents/${id}/reindex`, { method: "POST" });
     else if (choice === "ocr") await postJson(`/api/documents/${id}/ocr`, { scope: $("ocrScope").value });
     else if (choice === "revert") await api(`/api/documents/${id}/revert-ocr`, { method: "POST" });
+    else if (choice === "layout") await postJson(`/api/documents/${id}/layout`, { redo: $("layoutRedo").checked });
   } catch (err) {
     alert(err.message);
   }

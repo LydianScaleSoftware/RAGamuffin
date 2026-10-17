@@ -1,0 +1,16 @@
+# Layout-analysis candidates for the evaluation in eval/. Not part of the running RAG stack.
+services:
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:latest
+    container_name: rag-docling
+    ports: ["127.0.0.1:5001:5001"]
+    profiles: ["docling"]
+  paddle:
+    build: ./paddle
+    container_name: rag-paddle
+    volumes:
+      - ./work:/work
+      - paddle-models:/root/.paddlex
+    profiles: ["paddle"]
+volumes:
+  paddle-models:

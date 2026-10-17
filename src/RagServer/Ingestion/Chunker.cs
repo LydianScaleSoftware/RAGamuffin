@@ -31,7 +31,7 @@ public sealed partial class Chunker(ChunkerSettings settings)
         {
             "markdown" => Pack(MarkdownBlocks(doc.Text), keepLines: true, splitOnHeading: true),
             "code" => Pack(ParagraphBlocks(ToLines(doc.Text), null, null), keepLines: true, splitOnHeading: false),
-            "pdf" => doc.Pages!.SelectMany(p => Pack(ParagraphBlocks(ToLines(p.Text), null, p.Page), keepLines: false, splitOnHeading: false)).ToList(),
+            "pdf" => ChunkPdf(doc.Pages!),
             _ => Pack(ParagraphBlocks(ToLines(doc.Text), null, null), keepLines: true, splitOnHeading: false),
         };
     }
@@ -57,18 +57,42 @@ public sealed partial class Chunker(ChunkerSettings settings)
         return blocks;
     }
 
-    /// <summary>Paragraph blocks tagged with their heading breadcrumb; fenced code is never split at blank lines.</summary>
-    static List<Block> MarkdownBlocks(string text)
+    /// <summary>
+    /// PDF pages are chunked one page at a time (chunks never span pages, so page citations stay exact). Pages from
+    /// layout analysis or OCR carry Markdown headings, and the heading breadcrumb carries over from page to page.
+    /// </summary>
+    List<ChunkDraft> ChunkPdf(IReadOnlyList<PageText> pages)
+    {
+        var headings = new string?[6];
+        var chunks = new List<ChunkDraft>();
+        foreach (var page in pages)
+        {
+            var blocks = page.Markdown
+                ? MarkdownBlocks(page.Text, headings, page.Page)
+                : ParagraphBlocks(ToLines(page.Text), Breadcrumb(headings), page.Page);
+            chunks.AddRange(Pack(blocks, keepLines: false, splitOnHeading: page.Markdown));
+        }
+        return chunks;
+    }
+
+    static string? Breadcrumb(string?[] headings) =>
+        headings.Any(h => h != null) ? string.Join(" > ", headings.Where(h => h != null)) : null;
+
+    /// <summary>
+    /// Paragraph blocks tagged with their heading breadcrumb; fenced code is never split at blank lines.
+    /// <paramref name="headings"/> carries the heading stack in and out, so a breadcrumb can continue across pages.
+    /// </summary>
+    static List<Block> MarkdownBlocks(string text, string?[]? headings = null, int? page = null)
     {
         var blocks = new List<Block>();
-        var headings = new string?[6];
-        string? path = null;
+        headings ??= new string?[6];
+        var path = Breadcrumb(headings);
         var current = new List<Line>();
         var inFence = false;
 
         void Flush()
         {
-            if (current.Count > 0) blocks.Add(new Block(current, path, null));
+            if (current.Count > 0) blocks.Add(new Block(current, path, page));
             current = [];
         }
 
@@ -90,7 +114,7 @@ public sealed partial class Chunker(ChunkerSettings settings)
                 var level = m.Groups[1].Length;
                 headings[level - 1] = m.Groups[2].Value;
                 for (var i = level; i < headings.Length; i++) headings[i] = null;
-                path = string.Join(" > ", headings.Where(h => h != null));
+                path = Breadcrumb(headings);
                 current.Add(line);
                 continue;
             }

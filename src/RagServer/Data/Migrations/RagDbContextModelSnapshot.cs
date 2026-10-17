@@ -166,6 +166,14 @@ namespace RagServer.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("language");
 
+                    b.Property<string>("LayoutMode")
+                        .HasColumnType("text")
+                        .HasColumnName("layout_mode");
+
+                    b.Property<int>("LayoutPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("layout_pages");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
@@ -255,6 +263,22 @@ namespace RagServer.Data.Migrations
                     b.Property<string>("EmbeddedText")
                         .HasColumnType("text")
                         .HasColumnName("embedded_text");
+
+                    b.Property<int?>("LayoutAngle")
+                        .HasColumnType("integer")
+                        .HasColumnName("layout_angle");
+
+                    b.Property<DateTimeOffset?>("LayoutAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("layout_at");
+
+                    b.Property<string>("LayoutJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("layout_json");
+
+                    b.Property<string>("LayoutText")
+                        .HasColumnType("text")
+                        .HasColumnName("layout_text");
 
                     b.Property<DateTimeOffset?>("OcrAt")
                         .HasColumnType("timestamp with time zone")

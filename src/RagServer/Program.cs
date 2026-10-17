@@ -7,6 +7,7 @@ using RagServer.Collections;
 using RagServer.Data;
 using RagServer.Embeddings;
 using RagServer.Ingestion;
+using RagServer.Layout;
 using RagServer.Mcp;
 using RagServer.Ocr;
 using RagServer.Search;
@@ -34,6 +35,13 @@ builder.Services.AddHttpClient<OcrEngine>((sp, http) =>
     http.Timeout = Timeout.InfiniteTimeSpan; // each page has its own timeout (Rag:Ocr:PageTimeoutSeconds)
 });
 builder.Services.AddSingleton<OcrCancellation>();
+builder.Services.AddHttpClient<LayoutClient>((sp, http) =>
+{
+    var opt = sp.GetRequiredService<IOptions<RagOptions>>().Value;
+    http.BaseAddress = new Uri(opt.Layout.Url.TrimEnd('/') + "/");
+    http.Timeout = Timeout.InfiniteTimeSpan; // each page has its own timeout (Rag:Layout:PageTimeoutSeconds)
+});
+builder.Services.AddTransient<PageAnalyzer>();
 
 builder.Services.AddSingleton<FileStore>();
 builder.Services.AddSingleton<IngestQueue>();

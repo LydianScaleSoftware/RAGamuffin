@@ -4,3 +4,4 @@ obj/
 /data/
 *.user
 .DS_Store
+/eval/work/

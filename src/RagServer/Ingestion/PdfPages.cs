@@ -29,6 +29,14 @@ public static class OcrScopes
         "all" => OcrScope.All,
         _ => null,
     };
+
+    public static string? Name(OcrScope? scope) => scope switch
+    {
+        OcrScope.MissingText => "missing",
+        OcrScope.Suspect => "suspect",
+        OcrScope.All => "all",
+        _ => null,
+    };
 }
 
 public static partial class PdfPages
@@ -134,9 +142,16 @@ public static partial class PdfPages
         .Where(p => scope switch
         {
             OcrScope.All => true,
-            OcrScope.Suspect => !HasUsefulText(p.EffectiveText) || (p.SuspectReason != null && p.Source == PageSource.Embedded),
+            OcrScope.Suspect => !HasUsefulText(p.EffectiveText) || (p.SuspectReason != null && p.Source != PageSource.Ocr),
             _ => !HasUsefulText(p.EffectiveText),
         })
+        .Select(p => p.Page)
+        .OrderBy(p => p)
+        .ToList();
+
+    /// <summary>Pages whose embedded text should be laid out: not OCR'd, and not yet analyzed unless redoing.</summary>
+    public static List<int> SelectForLayout(IEnumerable<DocumentPage> pages, LayoutMode mode) => pages
+        .Where(p => HasUsefulText(p.EmbeddedText) && p.Source != PageSource.Ocr && (mode == LayoutMode.Redo || p.LayoutAt is null))
         .Select(p => p.Page)
         .OrderBy(p => p)
         .ToList();
@@ -146,7 +161,7 @@ public static partial class PdfPages
     {
         var usable = pages.OrderBy(p => p.Page)
             .Where(p => HasUsefulText(p.EffectiveText))
-            .Select(p => new PageText(p.Page, p.EffectiveText!))
+            .Select(p => new PageText(p.Page, p.EffectiveText!, Markdown: p.Source != PageSource.Embedded))
             .ToList();
         var full = string.Join("\n\n", usable.Select(p => $"[Page {p.Page}]\n{p.Text}"));
         return new ExtractedDocument("pdf", null, full, usable);

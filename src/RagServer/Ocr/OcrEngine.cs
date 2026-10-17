@@ -21,7 +21,9 @@ public sealed class OcrEngine(HttpClient http, IOptions<RagOptions> options, ILo
     static OcrAvailability? _cached;
     static DateTimeOffset _cachedAt;
 
-    sealed record ChatResponse([property: JsonPropertyName("message")] ChatMessage? Message);
+    sealed record ChatResponse(
+        [property: JsonPropertyName("message")] ChatMessage? Message,
+        [property: JsonPropertyName("done_reason")] string? DoneReason);
     sealed record ChatMessage([property: JsonPropertyName("content")] string? Content);
     sealed record TagsResponse([property: JsonPropertyName("models")] List<TagModel> Models);
     sealed record TagModel([property: JsonPropertyName("name")] string Name);
@@ -58,6 +60,43 @@ public sealed class OcrEngine(HttpClient http, IOptions<RagOptions> options, ILo
     public static bool SameModel(string installed, string configured) =>
         string.Equals(installed, configured, StringComparison.OrdinalIgnoreCase) ||
         (!configured.Contains(':') && string.Equals(installed, configured + ":latest", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Renders one page (0-based index) at the given resolution, untrimmed.</summary>
+    public static SKBitmap RenderBitmap(byte[] pdf, int pageIndex, int dpi) =>
+        Conversion.ToImage(pdf, page: pageIndex, options: new RenderOptions(Dpi: dpi, WithAnnotations: true));
+
+    /// <summary>Rotates clockwise by a multiple of 90°.</summary>
+    public static SKBitmap Rotate(SKBitmap source, int clockwiseDegrees)
+    {
+        var degrees = ((clockwiseDegrees % 360) + 360) % 360;
+        if (degrees == 0) return source.Copy();
+        var (w, h) = degrees == 180 ? (source.Width, source.Height) : (source.Height, source.Width);
+        var rotated = new SKBitmap(w, h);
+        using var canvas = new SKCanvas(rotated);
+        canvas.Translate(w / 2f, h / 2f);
+        canvas.RotateDegrees(degrees);
+        canvas.Translate(-source.Width / 2f, -source.Height / 2f);
+        using var image = SKImage.FromBitmap(source);
+        canvas.DrawImage(image, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest));
+        return rotated;
+    }
+
+    /// <summary>A copy scaled down so its longest side is at most <paramref name="maxEdge"/> (never scaled up).</summary>
+    public static SKBitmap Downscale(SKBitmap source, int maxEdge)
+    {
+        var longest = Math.Max(source.Width, source.Height);
+        if (longest <= maxEdge) return source.Copy();
+        var factor = maxEdge / (double)longest;
+        return source.Resize(new SKImageInfo((int)(source.Width * factor), (int)(source.Height * factor)),
+            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
+    }
+
+    public static byte[] EncodePng(SKBitmap bitmap)
+    {
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
 
     /// <summary>
     /// Renders one page (0-based index) to PNG, trimmed to its content and scaled so its longer side fits
@@ -122,7 +161,10 @@ public sealed class OcrEngine(HttpClient http, IOptions<RagOptions> options, ILo
     }
 
     /// <summary>Sends one page image to the vision model and returns its transcription.</summary>
-    public async Task<string> TranscribeAsync(byte[] png, CancellationToken ct)
+    public Task<string> TranscribeAsync(byte[] png, CancellationToken ct) => TranscribeAsync(png, Opt.Prompt, ct);
+
+    /// <summary>Sends an image (a page or one region of it) to the vision model with the given task prompt.</summary>
+    public async Task<string> TranscribeAsync(byte[] png, string prompt, CancellationToken ct)
     {
         var body = new JsonObject
         {
@@ -132,10 +174,10 @@ public sealed class OcrEngine(HttpClient http, IOptions<RagOptions> options, ILo
             ["messages"] = new JsonArray(new JsonObject
             {
                 ["role"] = "user",
-                ["content"] = Opt.Prompt,
+                ["content"] = prompt,
                 ["images"] = new JsonArray(Convert.ToBase64String(png)),
             }),
-            ["options"] = new JsonObject { ["temperature"] = 0, ["num_ctx"] = Opt.NumCtx },
+            ["options"] = new JsonObject { ["temperature"] = 0, ["num_ctx"] = Opt.NumCtx, ["num_predict"] = Opt.MaxOutputTokens },
         };
         if (Opt.Think is { } think) body["think"] = think;
 
@@ -147,6 +189,8 @@ public sealed class OcrEngine(HttpClient http, IOptions<RagOptions> options, ILo
             if (!resp.IsSuccessStatusCode)
                 throw new OcrException($"Ollama returned {(int)resp.StatusCode}: {await resp.Content.ReadAsStringAsync(timeout.Token)}");
             var result = await resp.Content.ReadFromJsonAsync<ChatResponse>(timeout.Token);
+            if (result?.DoneReason == "length")
+                throw new OcrException($"The model's output hit the {Opt.MaxOutputTokens}-token limit (usually a repetition loop).");
             return CleanTranscription(result?.Message?.Content);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)

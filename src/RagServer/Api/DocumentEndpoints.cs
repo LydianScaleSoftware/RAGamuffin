@@ -27,7 +27,7 @@ public static class DocumentEndpoints
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
-                    d.ProgressDone, d.ProgressTotal,
+                    d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                 })
                 .ToListAsync(ct);
         });
@@ -55,7 +55,7 @@ public static class DocumentEndpoints
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes, d.Sha256,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt, d.Text,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
-                    d.ProgressDone, d.ProgressTotal,
+                    d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                 })
                 .SingleOrDefaultAsync(ct);
             if (doc is null) return Results.NotFound();

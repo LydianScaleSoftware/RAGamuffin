@@ -2,7 +2,8 @@ using System.Text;
 
 namespace RagServer.Ingestion;
 
-public sealed record PageText(int Page, string Text);
+/// <summary>One page's text; <paramref name="Markdown"/> is true when it came from layout analysis or OCR (headings are marked up).</summary>
+public sealed record PageText(int Page, string Text, bool Markdown = false);
 
 public sealed record ExtractedDocument(string ContentType, string? Language, string Text, IReadOnlyList<PageText>? Pages);
 

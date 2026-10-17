@@ -174,3 +174,22 @@ label.choice:has(input:disabled) { opacity: .55; cursor: default; }
 label.choice input { margin-top: 4px; }
 label.choice .hint { display: block; margin: 4px 0 0; }
 .scope-row { margin-top: 6px; }
+
+/* ---------- layout and batch processing ---------- */
+.badge.layout { color: var(--ok); }
+.queue {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+#batchDialog { width: min(560px, calc(100vw - 32px)); }
+label.radio.indent { padding-left: 24px; }
+label.inline { font-size: 12px; color: var(--muted); }
+
+/* ---------- sortable columns ---------- */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+th.sortable::after { content: "↕"; opacity: .35; margin-left: 4px; font-size: 10px; }
+th.sortable.sorted { color: var(--accent); }
+th.sortable.sorted[data-dir="asc"]::after { content: "▲"; opacity: 1; }
+th.sortable.sorted[data-dir="desc"]::after { content: "▼"; opacity: 1; }

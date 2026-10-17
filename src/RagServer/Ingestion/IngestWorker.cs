@@ -4,21 +4,45 @@ using Microsoft.Extensions.Options;
 using Pgvector;
 using RagServer.Data;
 using RagServer.Embeddings;
+using RagServer.Layout;
 using RagServer.Ocr;
 
 namespace RagServer.Ingestion;
 
-public enum JobKind { Index, Ocr }
+public enum JobKind
+{
+    /// <summary>Extract, chunk and embed (fast lane).</summary>
+    Index,
+    /// <summary>OCR and/or layout analysis of PDF pages, then re-chunk (slow lane).</summary>
+    Analyze,
+}
 
-public sealed record IngestJob(Guid DocumentId, JobKind Kind = JobKind.Index, OcrScope Scope = OcrScope.MissingText);
+public enum LayoutMode
+{
+    /// <summary>Lay out pages with embedded text that haven't been analyzed yet.</summary>
+    New,
+    /// <summary>Lay out every page with embedded text again.</summary>
+    Redo,
+}
+
+public static class LayoutModes
+{
+    public static LayoutMode? Parse(string? name) => name switch { "new" => LayoutMode.New, "redo" => LayoutMode.Redo, _ => null };
+
+    public static string? Name(LayoutMode? mode) => mode switch { LayoutMode.New => "new", LayoutMode.Redo => "redo", _ => null };
+}
+
+/// <summary>An index job, or an analysis job with an optional OCR scope and an optional layout mode.</summary>
+public sealed record IngestJob(Guid DocumentId, JobKind Kind = JobKind.Index, OcrScope? Scope = null, LayoutMode? Layout = null);
 
 /// <summary>
-/// Two independent lanes: indexing (uploads, re-indexes) and OCR. A long OCR run never holds up indexing.
+/// Two independent lanes: indexing (uploads, re-indexes) and analysis (OCR, layout). A long analysis run never holds
+/// up indexing.
 /// </summary>
 public sealed class IngestQueue
 {
     readonly Channel<IngestJob> _index = Channel.CreateUnbounded<IngestJob>();
-    readonly Channel<IngestJob> _ocr = Channel.CreateUnbounded<IngestJob>();
+    readonly Channel<IngestJob> _analyze = Channel.CreateUnbounded<IngestJob>();
 
     public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => EnqueueAsync(new IngestJob(id), ct);
 
@@ -26,7 +50,7 @@ public sealed class IngestQueue
 
     public IAsyncEnumerable<IngestJob> ReadAllAsync(JobKind lane, CancellationToken ct) => Lane(lane).Reader.ReadAllAsync(ct);
 
-    Channel<IngestJob> Lane(JobKind kind) => kind == JobKind.Ocr ? _ocr : _index;
+    Channel<IngestJob> Lane(JobKind kind) => kind == JobKind.Analyze ? _analyze : _index;
 }
 
 /// <summary>
@@ -41,6 +65,8 @@ public sealed class IngestWorker(
     IngestQueue queue,
     OllamaEmbedder embedder,
     OcrEngine ocr,
+    LayoutClient layout,
+    PageAnalyzer analyzer,
     OcrCancellation cancellation,
     FileStore files,
     IOptions<RagOptions> options,
@@ -54,11 +80,11 @@ public sealed class IngestWorker(
         {
             var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
             var interrupted = await db.Documents.Where(d => d.Status == DocumentStatus.Pending || d.Status == DocumentStatus.Ocr)
-                .Select(d => new { d.Id, d.Status, d.OcrScope }).ToListAsync(stoppingToken);
+                .Select(d => new { d.Id, d.Status, d.OcrScope, d.LayoutMode }).ToListAsync(stoppingToken);
             foreach (var d in interrupted)
             {
                 if (d.Status == DocumentStatus.Ocr)
-                    await queue.EnqueueAsync(new IngestJob(d.Id, JobKind.Ocr, OcrScopes.Parse(d.OcrScope) ?? OcrScope.MissingText), stoppingToken);
+                    await queue.EnqueueAsync(new IngestJob(d.Id, JobKind.Analyze, OcrScopes.Parse(d.OcrScope), LayoutModes.Parse(d.LayoutMode)), stoppingToken);
                 else
                     await queue.EnqueueAsync(d.Id, stoppingToken);
             }
@@ -66,7 +92,7 @@ public sealed class IngestWorker(
                 log.LogInformation("Resuming {Count} interrupted jobs", interrupted.Count);
         }
 
-        await Task.WhenAll(RunLaneAsync(JobKind.Index, stoppingToken), RunLaneAsync(JobKind.Ocr, stoppingToken));
+        await Task.WhenAll(RunLaneAsync(JobKind.Index, stoppingToken), RunLaneAsync(JobKind.Analyze, stoppingToken));
     }
 
     async Task RunLaneAsync(JobKind lane, CancellationToken stoppingToken)
@@ -75,7 +101,7 @@ public sealed class IngestWorker(
         {
             try
             {
-                if (lane == JobKind.Ocr) await OcrAsync(job, stoppingToken);
+                if (lane == JobKind.Analyze) await AnalyzeAsync(job, stoppingToken);
                 else await IndexAsync(job.DocumentId, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -90,8 +116,8 @@ public sealed class IngestWorker(
             catch (Exception ex)
             {
                 log.LogError(ex, "{Kind} job for document {Id} failed", lane, job.DocumentId);
-                await MarkFailedAsync(job.DocumentId, lane == JobKind.Ocr ? DocumentStatus.Ocr : DocumentStatus.Pending,
-                    ex is ExtractionException or OcrException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}");
+                await MarkFailedAsync(job.DocumentId, lane == JobKind.Analyze ? DocumentStatus.Ocr : DocumentStatus.Pending,
+                    ex is ExtractionException or OcrException or LayoutException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -122,7 +148,7 @@ public sealed class IngestWorker(
         }, ct);
     }
 
-    async Task OcrAsync(IngestJob job, CancellationToken stopping)
+    async Task AnalyzeAsync(IngestJob job, CancellationToken stopping)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
@@ -134,27 +160,53 @@ public sealed class IngestWorker(
         {
             var bytes = await ReadOriginalAsync(doc.Id, stopping);
             var pages = await SyncPagesAsync(db, doc.Id, PdfPages.Extract(bytes), stopping);
-            // On resume, pages finished earlier in this run are already done.
+            var notices = new List<string>();
+
+            // On resume, pages finished earlier in this job are already done.
             var requested = doc.OcrRequestedAt ?? DateTimeOffset.MaxValue;
-            var finished = pages.Where(p => p.OcrAt >= requested).Select(p => p.Page).ToHashSet();
-            var targets = PdfPages.SelectForOcr(pages, job.Scope).Union(finished).Order().ToList();
-            var opt = options.Value.Ocr;
-            string? notice = null;
+            var finished = pages.Where(p => p.OcrAt >= requested || p.LayoutAt >= requested).Select(p => p.Page).ToHashSet();
 
-            var availability = await ocr.GetAvailabilityAsync(stopping);
+            var ocrTargets = job.Scope is { } s ? PdfPages.SelectForOcr(pages, s) : [];
+            var layoutTargets = job.Layout is { } mode ? PdfPages.SelectForLayout(pages, mode).Except(ocrTargets).ToList() : [];
+
+            var ocrStatus = await ocr.GetAvailabilityAsync(stopping);
+            var layoutStatus = await layout.GetAvailabilityAsync(stopping);
             if (doc.OcrRequestedAt is null)
-                // Started by a version that didn't record the run's scope, so it can't be resumed faithfully.
-                notice = "OCR was interrupted by a server restart; finished pages were kept. Use Re-index… to run it again.";
-            else if (!availability.Available)
-                notice = "OCR not run: " + availability.Reason;
-            else if (targets.Count > opt.MaxPages)
-                notice = $"OCR not run: {targets.Count} pages exceeds the limit of {opt.MaxPages} (Rag:Ocr:MaxPages).";
-            else if (targets.Count == 0)
-                notice = "OCR not run: no pages matched.";
-            else
-                notice = await TranscribePagesAsync(db, doc, bytes, pages, targets, finished, opt.Model, cts.Token, stopping);
+            {
+                // Started by a version that didn't record the job, so it can't be resumed faithfully.
+                notices.Add("OCR was interrupted by a server restart; finished pages were kept. Use Re-index… to run it again.");
+                ocrTargets = layoutTargets = [];
+            }
+            if (ocrTargets.Count > 0 && !ocrStatus.Available)
+            {
+                notices.Add("OCR not run: " + ocrStatus.Reason);
+                ocrTargets = [];
+            }
+            if (layoutTargets.Count > 0 && !layoutStatus.Available)
+            {
+                notices.Add("Layout analysis not run: " + layoutStatus.Reason);
+                layoutTargets = [];
+            }
+            var total = ocrTargets.Count + layoutTargets.Count;
+            var limit = options.Value.Ocr.MaxPages;
+            if (total > limit)
+            {
+                notices.Add($"Not run: {total} pages exceeds the limit of {limit} (Rag:Ocr:MaxPages).");
+                ocrTargets = layoutTargets = [];
+            }
+            if (job.Scope is not null && job.Layout is null && ocrTargets.Count == 0 && notices.Count == 0)
+                notices.Add("OCR not run: no pages matched.");
 
-            await RebuildFromPagesAsync(db, doc, DocumentStatus.Ocr, notice, stopping);
+            if (ocrTargets.Count + layoutTargets.Count > 0)
+            {
+                var work = ocrTargets.Select(p => (Page: p, Ocr: true))
+                    .Concat(layoutTargets.Select(p => (Page: p, Ocr: false)))
+                    .OrderBy(w => w.Page).ToList();
+                var notice = await ProcessPagesAsync(db, doc, bytes, pages, work, finished, layoutStatus.Available, cts.Token, stopping);
+                if (notice is not null) notices.Add(notice);
+            }
+
+            await RebuildFromPagesAsync(db, doc, DocumentStatus.Ocr, notices.Count > 0 ? string.Join(" ", notices) : null, stopping);
         }
         finally
         {
@@ -162,49 +214,98 @@ public sealed class IngestWorker(
         }
     }
 
-    /// <summary>OCRs the target pages, saving each as it finishes. Returns a notice if the run stopped early or found nothing.</summary>
-    async Task<string?> TranscribePagesAsync(RagDbContext db, Document doc, byte[] bytes, List<DocumentPage> pages,
-        List<int> targets, IReadOnlySet<int> alreadyDone, string model, CancellationToken cancel, CancellationToken stopping)
+    /// <summary>
+    /// OCRs or lays out each page in turn, saving each as it finishes. OCR uses layout regions when the layout service
+    /// is available, and whole-page OCR otherwise. Returns a notice if the run stopped early or something was skipped.
+    /// </summary>
+    async Task<string?> ProcessPagesAsync(RagDbContext db, Document doc, byte[] bytes, List<DocumentPage> pages,
+        List<(int Page, bool Ocr)> work, IReadOnlySet<int> alreadyDone, bool useLayout, CancellationToken cancel, CancellationToken stopping)
     {
         var byNumber = pages.ToDictionary(p => p.Page);
-        var done = targets.Count(alreadyDone.Contains);
+        var model = options.Value.Ocr.Model;
+        var done = work.Count(w => alreadyDone.Contains(w.Page));
         var blank = new List<int>();
-        await SetProgressAsync(db, doc.Id, done, targets.Count, stopping);
+        var rotatedText = new List<int>();
+        var wholePage = 0;
+        var fallbackRegions = 0;
+        await SetProgressAsync(db, doc.Id, done, work.Count, stopping);
         var started = DateTimeOffset.UtcNow;
 
-        foreach (var number in targets.Where(n => !alreadyDone.Contains(n)))
+        foreach (var (number, isOcr) in work.Where(w => !alreadyDone.Contains(w.Page)))
         {
-            string text;
+            var page = byNumber[number];
             try
             {
                 cancel.ThrowIfCancellationRequested();
-                var png = ocr.RenderPage(bytes, number - 1);
-                text = await ocr.TranscribeAsync(png, cancel);
+                if (isOcr)
+                {
+                    string text;
+                    PageLayoutResult? result = null;
+                    if (useLayout)
+                    {
+                        try { result = await analyzer.OcrPageAsync(bytes, number - 1, cancel); }
+                        catch (LayoutException ex)
+                        {
+                            log.LogWarning("Layout analysis failed for page {Page} of {Name}: {Error}; using whole-page OCR", number, doc.Name, ex.Message);
+                        }
+                    }
+                    if (result is not null)
+                    {
+                        text = result.Text;
+                        fallbackRegions += result.FallbackRegions;
+                    }
+                    else
+                    {
+                        wholePage++;
+                        text = await ocr.TranscribeAsync(ocr.RenderPage(bytes, number - 1), cancel);
+                    }
+
+                    page.OcrText = text;
+                    page.OcrModel = model;
+                    page.OcrAt = DateTimeOffset.UtcNow;
+                    page.LayoutJson = result?.RegionsJson;
+                    page.LayoutAngle = result?.Angle;
+                    page.LayoutAt = result is null ? null : page.OcrAt;
+                    if (PdfPages.HasUsefulText(text)) page.Source = PageSource.Ocr;
+                    else blank.Add(number);
+                }
+                else
+                {
+                    var result = await analyzer.ArrangeEmbeddedAsync(bytes, number - 1, cancel);
+                    if (result is null) rotatedText.Add(number);
+                    else
+                    {
+                        page.LayoutText = result.Text;
+                        page.LayoutJson = result.RegionsJson;
+                        page.LayoutAngle = result.Angle;
+                        page.LayoutAt = DateTimeOffset.UtcNow;
+                        if (page.Source == PageSource.Embedded && PdfPages.HasUsefulText(result.Text))
+                            page.Source = PageSource.Layout;
+                    }
+                }
             }
             catch (OperationCanceledException) when (!stopping.IsCancellationRequested)
             {
                 return done == 0
-                    ? "OCR cancelled before any page finished."
-                    : $"OCR cancelled after {done} of {targets.Count} pages; finished pages were kept.";
+                    ? "Cancelled before any page finished."
+                    : $"Cancelled after {done} of {work.Count} pages; finished pages were kept.";
             }
-            catch (OcrException ex)
+            catch (Exception ex) when (ex is OcrException or LayoutException)
             {
-                return $"OCR stopped at page {number}: {ex.Message} ({done} of {targets.Count} pages finished; they were kept.)";
+                return $"Stopped at page {number}: {ex.Message} ({done} of {work.Count} pages finished; they were kept.)";
             }
 
-            var page = byNumber[number];
-            page.OcrText = text;
-            page.OcrModel = model;
-            page.OcrAt = DateTimeOffset.UtcNow;
-            if (PdfPages.HasUsefulText(text)) page.Source = PageSource.Ocr;
-            else blank.Add(number);
             await db.SaveChangesAsync(stopping);
-            await SetProgressAsync(db, doc.Id, ++done, targets.Count, stopping);
+            await SetProgressAsync(db, doc.Id, ++done, work.Count, stopping);
         }
 
-        log.LogInformation("OCR'd {Pages} pages of {Name} with {Model} in {Seconds:F0}s",
-            done, doc.Name, model, (DateTimeOffset.UtcNow - started).TotalSeconds);
-        return blank.Count == 0 ? null : $"OCR found no text on page{(blank.Count > 1 ? "s" : "")} {string.Join(", ", blank)}.";
+        log.LogInformation("Analyzed {Pages} pages of {Name} in {Seconds:F0}s", done, doc.Name, (DateTimeOffset.UtcNow - started).TotalSeconds);
+        var notes = new List<string>();
+        if (blank.Count > 0) notes.Add($"OCR found no text on page{(blank.Count > 1 ? "s" : "")} {string.Join(", ", blank)}.");
+        if (wholePage > 0) notes.Add($"{wholePage} page{(wholePage > 1 ? "s were" : " was")} OCR'd without layout analysis (layout service failed).");
+        if (fallbackRegions > 0) notes.Add($"{fallbackRegions} region{(fallbackRegions > 1 ? "s" : "")} used the layout service's own reading because glm-ocr failed on {(fallbackRegions > 1 ? "them" : "it")}.");
+        if (rotatedText.Count > 0) notes.Add($"Layout skipped for rotated page{(rotatedText.Count > 1 ? "s" : "")} {string.Join(", ", rotatedText)}; they keep their embedded text.");
+        return notes.Count == 0 ? null : string.Join(" ", notes);
     }
 
     Task SetProgressAsync(RagDbContext db, Guid id, int done, int total, CancellationToken ct) =>
@@ -258,19 +359,28 @@ public sealed class IngestWorker(
             if (drafts.Count == 0) d.Text = null;
             d.ProgressDone = d.ProgressTotal = null;
             d.OcrScope = null;
+            d.LayoutMode = null;
             d.OcrRequestedAt = null;
         }, ct);
 
-        // Optional: OCR text-less pages straight after import.
-        if (committed && expectedStatus == DocumentStatus.Pending && doc.EmptyPages > 0 && options.Value.Ocr.AutoOnImport
-            && (await ocr.GetAvailabilityAsync(ct)).Available)
+        // Optional: queue OCR of text-less pages and/or layout analysis straight after import.
+        if (committed && expectedStatus == DocumentStatus.Pending)
         {
-            await db.Documents.Where(d => d.Id == doc.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.Status, DocumentStatus.Ocr)
-                    .SetProperty(d => d.OcrScope, "missing")
-                    .SetProperty(d => d.OcrRequestedAt, DateTimeOffset.UtcNow), ct);
-            await queue.EnqueueAsync(new IngestJob(doc.Id, JobKind.Ocr, OcrScope.MissingText), ct);
+            var opt = options.Value;
+            OcrScope? autoOcr = opt.Ocr.AutoOnImport && doc.EmptyPages > 0 && (await ocr.GetAvailabilityAsync(ct)).Available
+                ? OcrScope.MissingText : null;
+            LayoutMode? autoLayout = opt.Layout.AutoOnImport && doc.PageCount > doc.EmptyPages && (await layout.GetAvailabilityAsync(ct)).Available
+                ? LayoutMode.New : null;
+            if (autoOcr is not null || autoLayout is not null)
+            {
+                await db.Documents.Where(d => d.Id == doc.Id && d.Status != DocumentStatus.Pending && d.Status != DocumentStatus.Ocr)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(d => d.Status, DocumentStatus.Ocr)
+                        .SetProperty(d => d.OcrScope, OcrScopes.Name(autoOcr))
+                        .SetProperty(d => d.LayoutMode, LayoutModes.Name(autoLayout))
+                        .SetProperty(d => d.OcrRequestedAt, DateTimeOffset.UtcNow), ct);
+                await queue.EnqueueAsync(new IngestJob(doc.Id, JobKind.Analyze, autoOcr, autoLayout), ct);
+            }
         }
     }
 
@@ -280,7 +390,8 @@ public sealed class IngestWorker(
         doc.PageCount = pages.Count;
         doc.OcrPages = ocrPages.Count;
         doc.EmptyPages = pages.Count(p => !PdfPages.HasUsefulText(p.EffectiveText));
-        doc.SuspectPages = pages.Count(p => p.SuspectReason != null && p.Source == PageSource.Embedded);
+        doc.SuspectPages = pages.Count(p => p.SuspectReason != null && p.Source != PageSource.Ocr);
+        doc.LayoutPages = pages.Count(p => p.LayoutAt != null && (p.Source == PageSource.Layout || (p.Source == PageSource.Ocr && p.LayoutJson != null)));
         doc.OcrModel = ocrPages.OrderByDescending(p => p.OcrAt).FirstOrDefault()?.OcrModel;
         doc.OcrAt = ocrPages.Max(p => p.OcrAt);
     }
@@ -360,6 +471,7 @@ public sealed class IngestWorker(
                     .SetProperty(d => d.ProgressDone, (int?)null)
                     .SetProperty(d => d.ProgressTotal, (int?)null)
                     .SetProperty(d => d.OcrScope, (string?)null)
+                    .SetProperty(d => d.LayoutMode, (string?)null)
                     .SetProperty(d => d.OcrRequestedAt, (DateTimeOffset?)null)
                     .SetProperty(d => d.UpdatedAt, DateTimeOffset.UtcNow));
         }

@@ -17,5 +17,15 @@ services:
       timeout: 3s
       retries: 20
 
+  layout:
+    build: ./layout-service
+    container_name: rag-layout
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5002:5002"
+    volumes:
+      - rag-layout-models:/root/.paddlex
+
 volumes:
   rag-pgdata:
+  rag-layout-models:

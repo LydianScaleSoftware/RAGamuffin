@@ -35,6 +35,9 @@ public sealed class Document
     public int OcrPages { get; set; }
     public int EmptyPages { get; set; }
     public int SuspectPages { get; set; }
+
+    /// <summary>Pages whose text was arranged by layout analysis (either OCR'd by region or embedded words placed by region).</summary>
+    public int LayoutPages { get; set; }
     public string? OcrModel { get; set; }
     public DateTimeOffset? OcrAt { get; set; }
 
@@ -42,10 +45,13 @@ public sealed class Document
     public int? ProgressDone { get; set; }
     public int? ProgressTotal { get; set; }
 
-    /// <summary>Scope of the queued or running OCR run ("missing", "suspect", "all"), so a restart can resume it.</summary>
+    /// <summary>OCR scope of the queued or running analysis job ("missing", "suspect", "all"), or null for no OCR.</summary>
     public string? OcrScope { get; set; }
 
-    /// <summary>When the queued or running OCR run was requested; pages OCR'd since then count as done on resume.</summary>
+    /// <summary>Layout analysis of pages with embedded text in that job: null (none), "new" (not yet analyzed) or "redo".</summary>
+    public string? LayoutMode { get; set; }
+
+    /// <summary>When the queued or running analysis job was requested; pages finished since then count as done on resume.</summary>
     public DateTimeOffset? OcrRequestedAt { get; set; }
 
     /// <summary>Full extracted text, filled in once ingestion succeeds.</summary>

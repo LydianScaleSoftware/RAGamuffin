@@ -16,27 +16,14 @@ After re-OCR'ing a page that had embedded text, compare the two versions. Small 
 ### "Correct" prompting mode
 Instead of transcribing from scratch, give the model the page image *and* the existing embedded text and ask it to fix errors. This is anchored to the old text, so it's less likely to drop content, but it may carry old errors forward. Worth comparing against fresh transcription on real old OCR'd PDFs.
 
-### Layout-aware OCR for tables and figures
-glm-ocr has separate `Table Recognition:` and `Figure Recognition:` modes, and its official SDK runs layout detection first and recognizes each region separately. We send the whole page with `Text Recognition:`. Findings so far:
-- Body text on a dense page came out word-for-word identical to the embedded text.
-- Running headers and footers were left out. That's good for search, but it means page furniture is lost.
-- On a mostly blank page it skipped the title until we trimmed blank margins (now done automatically). Other isolated small blocks may still be skipped.
-
-A layout pass (detect regions, then send each with the right prompt) would improve tables and isolated blocks.
-
 ### Choosing the model
 `glm-ocr` was a best guess: small, document-focused and the most-pulled OCR model on Ollama. `qwen3.8:27b` (already installed, vision-capable, slower) is the obvious alternative for messy pages. Possible improvements:
 - A model picker in the UI, and a filter for "documents OCR'd with a model other than the current one", to re-run them in bulk.
 - A small benchmark page: OCR one page with two models and show both.
 - *Note:* reasoning models such as qwen3.8 need `Rag:Ocr:Think` set to `false`.
 
-### Bulk actions
-- "Run OCR on all documents that need it" (per collection or everywhere).
-- "Re-OCR all suspect pages" across a collection.
-- *Why deferred:* one document at a time keeps runs visible and cancellable while the model choice is still unproven.
-
-### Automatic OCR on import
-`Rag:Ocr:AutoOnImport` exists but is off by default. Scanned PDFs wait at **needs OCR** for a manual **Run OCR**, so a big batch can't occupy `tb` unexpectedly. Revisit once OCR has proven reliable.
+### Automatic OCR and layout on import
+`Rag:Ocr:AutoOnImport` and `Rag:Layout:AutoOnImport` exist but are off by default, so documents are processed in deliberate batches (e.g. overnight with **Process…**). Revisit once the pipeline has proven reliable.
 
 ### Apple Vision fallback
 macOS's Vision framework (`VNRecognizeTextRequest`) gives good OCR on this Mac with no model download, via a small Swift helper. It would be useful when `tb` is offline, or as a second opinion for comparing transcriptions. It only works on macOS.
@@ -49,6 +36,48 @@ The current check is conservative: invisible text over a full-page image, OCR so
 - A dictionary-based word check.
 - A per-document score shown in the UI.
 - Letting the user mark a whole document as "old OCR" so every page is re-OCR'd.
+
+## Layout analysis
+
+Built: the layout service (`layout-service/`, PaddleOCR PP-StructureV3) handles orientation, regions and reading order; glm-ocr reads each region of scans; digital pages are filled with the PDF's own words; batches are queued with **Process…**. The comparison that led here is in `eval/` (re-run `eval/scripts/` to re-check after changes). Follow-ups:
+
+### Run the layout service on `tb`'s GPU
+On this Mac's CPU it takes about 25–40 seconds per page. With Docker on `tb` and a GPU image (`LAYOUT_DEVICE=gpu`), it would be several times faster. Only `Rag:Layout:Url` would change.
+
+### Re-assemble pages without re-running models
+Each page stores its regions (`layout_json`). Improvements to the assembly step (e.g. better table handling) could be re-applied to embedded-text pages from the stored regions, without calling the layout service again. Scans would still need glm-ocr re-runs for changed regions.
+
+### Dense and unusual tables
+Paddle's cell grid is sometimes coarser than the real table (the crow_cousins opcode sheet). Those tables fall back to the PDF's content order, which keeps rows intact but loses the grid. Options: glm-ocr `Table Recognition:` on the table crop as a second opinion, or a column-gap splitter for side-by-side tables.
+
+### Rotated pages with embedded text
+Layout is skipped on embedded-text pages that are rotated (the PDF's own rotation flag, or a rotation the layout service detects), because mapping words onto rotated regions needs extra geometry. They keep their plain embedded text and are listed in the job notice.
+
+### Formulas and charts
+Formula regions are sent to glm-ocr's `Formula Recognition:` mode but stored as plain text. Chart regions keep only their visible text. Rendering formulas as LaTeX and describing charts are both possible with a larger vision model.
+
+### Document-level heading levels
+Headings are `#` for document titles and `##` for everything else. Real heading depth (chapter > section > subsection) could be inferred from font size on digital pages, or from numbering ("2.1.3"), which would give deeper breadcrumbs.
+
+## Web import and crawling
+
+Point the server at a URL and ingest that page, or a whole documentation site, into a collection. The motivating case is a local, searchable copy of the Avalonia docs for opencode.
+
+### How it would work
+- **Starting point:** a start URL plus a scope. By default the scope is same host and the start URL's path prefix (e.g. everything under `https://docs.avaloniaui.net/docs/`), with a maximum depth and page count. Optional include/exclude patterns cover sections like versioned duplicates or blog pages.
+- **Finding pages:** use the site's `sitemap.xml` when it has one; most documentation generators (Docusaurus, MkDocs, DocFX) publish one, and it's faster and cleaner than following links. Fall back to following in-scope links.
+- **Politeness:** respect `robots.txt`, fetch one page at a time with a delay, and identify the crawler in its user agent.
+- **HTML to Markdown:** extract only the main article (drop navigation, sidebars, footers, cookie banners), keep headings and code blocks, and convert tables. The Markdown then goes through the existing chunker, so headings become section breadcrumbs.
+- **Storage:** each page becomes a document named by its URL path, in a collection chosen at import (e.g. "Avalonia docs"). The source URL is stored with the document, and MCP search results cite the URL instead of a file name.
+- **Re-crawl/refresh:** re-run a saved crawl to pick up changes. Pages are skipped when unchanged (ETag/`Last-Modified`, or same content hash), updated when changed, and optionally removed when they've disappeared from the site. A schedule (e.g. weekly) could come later.
+- **Background job:** crawls would run in their own lane with progress and cancel, like OCR, so uploads aren't blocked.
+- **UI:** an "Import from URL…" action with the scope options, a preview of how many pages are in scope before starting, and a list of saved crawls with their last run.
+
+### Things to check per site
+- **Source repositories:** many documentation sites are built from Markdown in a public Git repository. Importing that repository's Markdown directly can be cleaner than crawling the rendered HTML. Worth checking for Avalonia before building a crawler around it.
+- **JavaScript-rendered sites:** pages that only render in a browser would need a headless browser (e.g. Playwright) instead of plain HTTP. Most documentation sites serve full HTML, so this should be an exception path.
+- **Versioned docs:** sites often publish the same page for several versions. The scope should pick one version to avoid near-duplicate chunks crowding search results.
+- **Licensing:** a local copy for personal search is the intended use; keep crawls to documentation you're allowed to copy.
 
 ## Search and indexing
 

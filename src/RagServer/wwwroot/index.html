@@ -52,12 +52,18 @@
         <div class="row">
           <select id="filterCollection"><option value="">All collections</option></select>
           <input id="filterName" placeholder="Filter by name">
+          <button id="clearSort" class="secondary" hidden title="Back to the default order (collection, then name)">Clear sort</button>
+          <button id="processBtn" class="secondary" title="Queue OCR and layout analysis for many PDFs, e.g. as an overnight batch">Process…</button>
         </div>
+      </div>
+      <div id="queuePanel" class="queue" hidden>
+        <div><strong>Processing queue</strong> <span id="queueText"></span></div>
+        <button id="queueCancel" class="small secondary danger">Cancel all</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Name</th><th>Collection</th><th>Type</th><th class="num">Size</th><th class="num">Chunks</th><th>Status</th><th>Updated</th><th></th></tr>
+            <tr><th class="check"><input type="checkbox" id="selectAllDocs" title="Select all shown"></th><th class="sortable" data-sort="name">Name</th><th class="sortable" data-sort="collection">Collection</th><th class="sortable" data-sort="type">Type</th><th class="sortable num" data-sort="size">Size</th><th class="sortable num" data-sort="chunks">Chunks</th><th class="sortable" data-sort="status">Status</th><th class="sortable" data-sort="updated">Updated</th><th></th></tr>
           </thead>
           <tbody id="docs"></tbody>
         </table>
@@ -93,6 +99,12 @@
           <span class="row scope-row"><select id="ocrScope"></select><span id="ocrEstimate" class="muted"></span></span>
           <span id="reindexOcrHint" class="hint"></span></span>
       </label>
+      <label class="choice">
+        <input type="radio" name="reindexChoice" value="layout">
+        <span><strong>Analyze layout</strong><br>
+          <span id="reindexLayoutHint" class="hint"></span>
+          <span class="row scope-row"><label class="inline"><input type="checkbox" id="layoutRedo"> Re-analyze pages already analyzed</label></span></span>
+      </label>
       <label class="choice" id="reindexRevertRow">
         <input type="radio" name="reindexChoice" value="revert">
         <span><strong>Revert to embedded text</strong><br><span id="reindexRevertHint" class="hint"></span></span>
@@ -100,6 +112,29 @@
       <div class="row end">
         <button value="cancel" class="secondary" formnovalidate>Cancel</button>
         <button value="confirm">Start</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="batchDialog">
+    <form method="dialog" id="batchForm">
+      <h2>Process PDFs</h2>
+      <p class="hint">Queues work for the analysis lane, one page at a time. Uploads keep indexing meanwhile, so this suits overnight batches.</p>
+      <fieldset>
+        <legend>Which documents</legend>
+        <label class="radio"><input type="radio" name="batchScope" value="selected"> <span id="batchSelectedLabel"></span></label>
+        <label class="radio"><input type="radio" name="batchScope" value="collection" checked> <span id="batchCollectionLabel"></span></label>
+      </fieldset>
+      <fieldset>
+        <legend>What to do</legend>
+        <label class="radio"><input type="checkbox" id="batchOcr" checked> OCR scanned pages (pages without text)</label>
+        <label class="radio"><input type="checkbox" id="batchLayout" checked> Analyze layout of pages with text</label>
+        <label class="radio indent"><input type="checkbox" id="batchRedo"> Include pages already analyzed</label>
+      </fieldset>
+      <div id="batchPreview" class="message"></div>
+      <div class="row end">
+        <button value="cancel" class="secondary" formnovalidate>Cancel</button>
+        <button value="confirm" id="batchQueue">Queue</button>
       </div>
     </form>
   </dialog>

@@ -17,12 +17,13 @@ opencode ──MCP /mcp─────┘
 | MCP endpoint | http://localhost:5077/mcp |
 | Health | http://localhost:5077/api/health |
 | Database | Docker container `rag-postgres`, `localhost:5432`, db/user/password `rag` |
+| Layout service | Docker container `rag-layout`, `localhost:5002` (first start downloads its models, a few minutes) |
 | Uploaded originals | `data/files/` |
 
 ## Running
 
 ```bash
-docker compose up -d                 # Postgres + pgvector (restarts with Docker Desktop)
+docker compose up -d                 # Postgres + pgvector, and the layout service (both restart with Docker Desktop)
 dotnet run --project src/RagServer   # applies migrations on startup
 ```
 
@@ -65,23 +66,39 @@ API uploads that name a collection that doesn't exist yet create it automaticall
 
 Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs. Binary files are rejected.
 
-## OCR for scanned PDFs
+## OCR and layout analysis for PDFs
 
-PDF pages without text can be read by a vision model on the Ollama server (default `glm-ocr`; set `Rag:Ocr:Model` to change it).
+PDFs go through two optional, slower steps on top of normal indexing. Both run in the background analysis lane, one page at a time, and suit overnight batches.
 
-- **Scanned PDFs** stop at **needs OCR** after upload. Their **Run OCR** button reads the pages without text.
-- **OCR'd documents** show an **OCR** badge in the status column. A partly OCR'd PDF shows a count such as `OCR 12/40`. The badge's tooltip gives the model, page count and date. MCP results mark OCR'd passages too, so opencode knows they may contain recognition errors.
-- **Re-index… on a PDF** opens a dialog:
-  - *Re-index* from the PDF's embedded text. OCR'd pages keep their OCR text.
-  - *Replace text with local OCR*, for pages without text, pages whose embedded text looks like poor old OCR, or all pages.
-  - *Revert to embedded text*, shown when OCR'd pages have embedded text to go back to.
-- **While OCR runs**, the status shows page progress and a **Cancel OCR** button. Cancelling keeps the pages already finished.
-- **Restarts don't lose work.** Each page is saved as soon as it's read, and an OCR run interrupted by a restart or reboot resumes where it stopped.
-- **Embedded text is never thrown away.** Each page stores its embedded and OCR text side by side, so OCR can be reverted or re-run, for example with a better model later.
+- **Layout analysis** uses the layout service (`layout-service/`, PaddleOCR PP-StructureV3, run by `docker compose`). It finds each page's orientation, its regions (titles, text, tables, figures, captions, headers and footers) and their reading order.
+- **OCR** reads pages without text with a vision model on the Ollama server (default `glm-ocr`; set `Rag:Ocr:Model` to change it).
 
-"Looks like poor OCR" is a heuristic: invisible text over a scanned image, OCR software named in the PDF metadata, or garbled words. It only ranks pages for the dialog and never triggers OCR by itself.
+How pages are read:
 
-OCR runs one page at a time, at roughly 1–15 seconds a page on `tb`. Pages are trimmed to their content before being sent, because glm-ocr can skip isolated text (such as a title) on a mostly blank page. Settings are under `Rag:Ocr` in `appsettings.json`. Ideas for later are in [Future Plans.md](Future%20Plans.md).
+| Page | With the layout service | Without it |
+|---|---|---|
+| Scanned (no text) | Turned upright; each region read by glm-ocr with a prompt suited to it (text, table, formula) | Whole page read by glm-ocr |
+| Digital (has text) | The PDF's own words placed into the regions: no re-OCR, so no new errors | The PDF's text in its stored order |
+
+Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading, and the job notice says so.
+
+**In the UI:**
+- **Status badges.** **OCR** marks pages read by local OCR, and **Layout** marks pages arranged by layout analysis. Their tooltips give counts, model and date. MCP results mark OCR'd passages too.
+- **Scans** stop at **needs OCR** after upload. **Run OCR** reads them.
+- **Re-index… on a PDF** offers:
+  - *re-index*;
+  - *replace text with local OCR* (pages without text, suspected poor old OCR, or all pages);
+  - *analyze layout* (optionally re-analyzing pages done before);
+  - *revert to embedded text*.
+- **Process…** queues many PDFs at once: the ticked documents, or every PDF in the current collection filter. Choose OCR, layout or both. A preview shows how many documents and pages are involved and a rough duration before you queue.
+- **The processing queue panel** shows the running job, what's queued, and **Cancel all**. Cancelling keeps finished pages.
+- **Nothing is thrown away.** Each page keeps its embedded text, OCR text and layout text side by side, so results can be reverted or re-run (e.g. with a better model). Work interrupted by a restart resumes where it stopped.
+
+**Timing on this Mac:** layout takes about 25–40 seconds per page. glm-ocr on `tb` adds a few seconds per region on scans.
+
+**Settings** are under `Rag:Ocr` and `Rag:Layout` in `appsettings.json`. Docker needs enough memory for the layout service, about 4–6 GB; 16 GB for Docker Desktop is comfortable.
+
+"Looks like poor OCR" is a heuristic: invisible text over a scanned image, OCR software named in the PDF metadata, or garbled words. It only ranks pages for the dialog and never triggers OCR by itself. Ideas for later are in [Future Plans.md](Future%20Plans.md).
 
 ## How it works
 
