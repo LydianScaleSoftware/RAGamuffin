@@ -46,13 +46,22 @@ Tools exposed (all read-only):
 
 ## Managing documents
 
-Everything is in the web UI:
+**Documents page** (http://localhost:5077):
 
-- Drop files or whole folders, or use the pickers. Folder uploads keep relative paths as document names and skip dot-folders, `node_modules`, `bin` and `obj`.
-- **Collections** group documents, for example one per project. Search and `list_documents` can filter by collection.
+- Pick the target in **Add to collection**, then drop files or whole folders, or use the pickers. Folder uploads keep relative paths as document names and skip dot-folders, `node_modules`, `bin` and `obj`.
+- **New collection…** opens the collections page ready to create one. After creating it, you return with the new collection selected.
 - Uploading the same name into the same collection replaces the document. Identical content is skipped.
 - Each document can be deleted, re-indexed or inspected. Inspecting shows its chunks, the extracted text and the original file.
 - **Test search** shows exactly what opencode will get back.
+
+**Collections page** (http://localhost:5077/collections.html):
+
+- Create several collections at once, one name per line.
+- Rename by editing names in the table, then **Save renames**. All edits apply together or not at all, so swapping two names works. A rename carries over to every document in that collection.
+- Tick collections and **Remove selected…** to remove them. You choose whether their documents move to `(default)` or are deleted. A move is refused when `(default)` already has a document with the same name.
+- `(default)` is the built-in, unnamed collection. It can't be renamed or removed. In the API and MCP tools it is called `default`.
+
+API uploads that name a collection that doesn't exist yet create it automatically.
 
 Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs with a text layer. Scanned PDFs are marked `failed`, because there is no OCR. Binary files are rejected.
 

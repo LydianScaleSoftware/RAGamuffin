@@ -95,6 +95,34 @@ namespace RagServer.Data.Migrations
                     b.ToTable("chunks", (string)null);
                 });
 
+            modelBuilder.Entity("RagServer.Data.Collection", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.HasKey("Id")
+                        .HasName("pk_collections");
+
+                    b.HasAlternateKey("Name")
+                        .HasName("ak_collections_name");
+
+                    b.ToTable("collections", (string)null);
+                });
+
             modelBuilder.Entity("RagServer.Data.Document", b =>
                 {
                     b.Property<Guid>("Id")
@@ -109,7 +137,7 @@ namespace RagServer.Data.Migrations
                     b.Property<string>("Collection")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("text")
+                        .HasColumnType("character varying(200)")
                         .HasDefaultValue("default")
                         .HasColumnName("collection");
 
@@ -177,6 +205,17 @@ namespace RagServer.Data.Migrations
                         .HasConstraintName("fk_chunks_documents_document_id");
 
                     b.Navigation("Document");
+                });
+
+            modelBuilder.Entity("RagServer.Data.Document", b =>
+                {
+                    b.HasOne("RagServer.Data.Collection", null)
+                        .WithMany()
+                        .HasForeignKey("Collection")
+                        .HasPrincipalKey("Name")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_documents_collections_collection");
                 });
 
             modelBuilder.Entity("RagServer.Data.Document", b =>

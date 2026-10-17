@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Collections</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>RAG</h1>
+    <nav>
+      <a href="/">Documents</a>
+      <a href="/collections.html" class="active">Collections</a>
+    </nav>
+    <span id="health" class="pill">checking…</span>
+  </header>
+
+  <main>
+    <section class="card" id="createCard">
+      <div class="row spread">
+        <h2>New collections</h2>
+        <a id="backLink" href="/" class="muted" hidden>← Back to documents</a>
+      </div>
+      <form id="createForm">
+        <textarea id="newNames" rows="3" placeholder="One name per line" spellcheck="false"></textarea>
+        <div class="row">
+          <button type="submit">Create</button>
+          <span id="createHint" class="hint">Create several at once by putting each name on its own line.</span>
+        </div>
+      </form>
+      <ul id="createLog" class="log"></ul>
+    </section>
+
+    <section class="card">
+      <div class="row spread">
+        <h2>Collections <span id="colCount" class="muted"></span></h2>
+        <div class="row">
+          <button id="discardBtn" class="secondary" disabled>Discard changes</button>
+          <button id="saveBtn" disabled>Save renames</button>
+          <button id="removeBtn" class="secondary danger" disabled>Remove selected…</button>
+        </div>
+      </div>
+      <p class="hint">Edit names in place and save them together, or tick collections to remove them. Renames apply all at once, so you can swap two names in one save.</p>
+      <div id="message" class="message" hidden></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="check"><input type="checkbox" id="selectAll" title="Select all"></th>
+              <th>Name</th><th class="num">Documents</th><th class="num">Chunks</th><th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="cols"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="removeDialog">
+    <form method="dialog" id="removeForm">
+      <h2>Remove <span id="removeCount"></span></h2>
+      <p id="removeList" class="muted"></p>
+      <fieldset>
+        <legend>What should happen to their documents?</legend>
+        <label class="radio"><input type="radio" name="docs" value="move" checked> Move them to (default)</label>
+        <label class="radio"><input type="radio" name="docs" value="delete"> Delete them <span class="status-failed" id="removeDocCount"></span></label>
+      </fieldset>
+      <div class="row end">
+        <button value="cancel" class="secondary" formnovalidate>Cancel</button>
+        <button value="confirm" class="danger-solid">Remove</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="common.js"></script>
+  <script src="collections.js"></script>
+</body>
+</html>

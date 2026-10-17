@@ -39,6 +39,11 @@ cat > "$PLIST" <<PLIST
 PLIST
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+# bootout returns before the old agent is gone; bootstrapping too early fails with "Input/output error".
+for _ in $(seq 1 20); do
+  launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break
+  sleep 0.5
+done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "Installed $LABEL. Logs: $ROOT/data/logs/ragserver.log"
 echo "UI: http://localhost:5077"

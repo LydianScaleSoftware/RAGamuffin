@@ -8,25 +8,29 @@
 </head>
 <body>
   <header>
-    <h1>RAG Documents</h1>
+    <h1>RAG</h1>
+    <nav>
+      <a href="/" class="active">Documents</a>
+      <a href="/collections.html">Collections</a>
+    </nav>
     <span id="health" class="pill">checking…</span>
   </header>
 
   <main>
     <section class="card">
       <h2>Add documents</h2>
+      <div class="row target">
+        <label for="collection">Add to collection</label>
+        <select id="collection"></select>
+        <a class="button secondary" id="newCollection" href="/collections.html?new=1&amp;return=1">New collection…</a>
+      </div>
       <div id="drop" class="drop">
-        <p>Drop files or folders here, or</p>
+        <p>Drop files or folders here to add them to <strong id="dropTarget">(default)</strong>, or</p>
         <div class="row">
           <label class="button">Choose files<input id="fileInput" type="file" multiple hidden></label>
           <label class="button secondary">Choose folder<input id="folderInput" type="file" webkitdirectory multiple hidden></label>
         </div>
         <p class="hint">Markdown, text, source code and PDF. Re-uploading a file with the same name replaces it.</p>
-      </div>
-      <div class="row">
-        <label for="collection">Collection</label>
-        <input id="collection" list="collectionList" value="default" autocomplete="off">
-        <datalist id="collectionList"></datalist>
       </div>
       <ul id="uploadLog" class="log"></ul>
     </section>
@@ -76,6 +80,7 @@
     <div id="viewerBody"></div>
   </dialog>
 
+  <script src="common.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

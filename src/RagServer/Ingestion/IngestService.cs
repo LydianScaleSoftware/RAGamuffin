@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Pgvector;
+using RagServer.Collections;
 using RagServer.Data;
 using RagServer.Embeddings;
 
@@ -15,12 +16,16 @@ public sealed class IngestService(
     RagDbContext db,
     FileStore files,
     IngestQueue queue,
+    CollectionService collections,
     IOptions<RagOptions> options)
 {
     public async Task<UploadResult> UploadAsync(string name, string collection, byte[] bytes, CancellationToken ct)
     {
         name = name.Trim();
-        collection = string.IsNullOrWhiteSpace(collection) ? "default" : collection.Trim();
+        collection = CollectionRules.Normalize(collection);
+        if (collection.Length == 0 || CollectionRules.IsDefault(collection)) collection = Collection.Default;
+        else if (CollectionRules.ValidateName(collection) is { } nameError)
+            return new(name, collection, null, "rejected", "Invalid collection: " + nameError);
 
         if (bytes.Length == 0)
             return new(name, collection, null, "rejected", "File is empty.");
@@ -58,6 +63,7 @@ public sealed class IngestService(
         doc.Error = null;
         doc.UpdatedAt = now;
 
+        await collections.EnsureExistsAsync(collection, ct);
         await files.SaveAsync(doc.Id, bytes, ct);
         await db.SaveChangesAsync(ct);
         await queue.EnqueueAsync(doc.Id, ct);

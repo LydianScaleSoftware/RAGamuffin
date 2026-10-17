@@ -1,45 +1,48 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const size = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
-const when = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 const location_ = (h) => h.startLine != null ? `lines ${h.startLine}–${h.endLine}` : h.page != null ? `page ${h.page}` : "";
 
 let docs = [];
 let pollTimer = null;
 
-async function api(path, init) {
-  const res = await fetch(path, init);
-  if (!res.ok && res.status !== 503) throw new Error(`${res.status} ${await res.text()}`);
-  return res.status === 204 || res.status === 202 ? null : res.json();
-}
-
-// ---------- health ----------
-async function checkHealth() {
-  const el = $("health");
-  try {
-    const h = await api("/api/health");
-    el.textContent = h.status === "ok" ? `ok · ${h.model} @ ${h.ollamaUrl}` : `degraded · db: ${h.database} · ollama: ${h.ollama}`;
-    el.className = "pill " + (h.status === "ok" ? "ok" : "bad");
-  } catch (e) {
-    el.textContent = "server unreachable";
-    el.className = "pill bad";
-  }
-}
-
 // ---------- collections ----------
+const TARGET_KEY = "rag.uploadCollection";
+
+// A collection passed back from the collections page (?collection=name) wins over the remembered one.
+const requestedTarget = new URLSearchParams(location.search).get("collection");
+if (requestedTarget) {
+  storageSet(TARGET_KEY, requestedTarget);
+  history.replaceState(null, "", location.pathname);
+}
+
 async function loadCollections() {
   const cols = await api("/api/collections");
-  $("collectionList").innerHTML = cols.map((c) => `<option value="${esc(c.name)}">`).join("");
+  const options = (withCounts) => cols.map((c) =>
+    `<option value="${esc(c.name)}">${esc(collectionLabel(c.name))}${withCounts ? ` (${c.documents})` : ""}</option>`).join("");
+
+  const target = $("collection");
+  const wanted = target.value || storageGet(TARGET_KEY) || DEFAULT_COLLECTION;
+  target.innerHTML = options(false);
+  target.value = cols.some((c) => c.name === wanted) ? wanted : DEFAULT_COLLECTION;
+  updateDropTarget();
+
   for (const id of ["filterCollection", "searchCollection"]) {
     const sel = $(id);
     const current = sel.value;
-    sel.innerHTML = `<option value="">All collections</option>` +
-      cols.map((c) => `<option value="${esc(c.name)}">${esc(c.name)} (${c.documents})</option>`).join("");
+    sel.innerHTML = `<option value="">All collections</option>` + options(true);
     sel.value = cols.some((c) => c.name === current) ? current : "";
   }
 }
+
+function updateDropTarget() {
+  $("dropTarget").textContent = collectionLabel($("collection").value || DEFAULT_COLLECTION);
+}
+
+$("collection").addEventListener("change", () => {
+  storageSet(TARGET_KEY, $("collection").value);
+  updateDropTarget();
+});
 
 // ---------- documents ----------
 async function loadDocs() {
@@ -59,7 +62,7 @@ function renderDocs() {
     : rows.map((d) => `
       <tr>
         <td class="name"><a data-view="${d.id}">${esc(d.name)}</a></td>
-        <td>${esc(d.collection)}</td>
+        <td>${esc(collectionLabel(d.collection))}</td>
         <td>${esc(d.language ?? d.contentType)}</td>
         <td class="num">${size(d.sizeBytes)}</td>
         <td class="num">${d.chunkCount}</td>
@@ -82,7 +85,7 @@ $("docs").addEventListener("click", async (e) => {
   }
   if (t.dataset.delete) {
     const d = docs.find((x) => x.id === t.dataset.delete);
-    if (!confirm(`Delete ${d.collection}/${d.name}?`)) return;
+    if (!confirm(`Delete ${d.name} from ${collectionLabel(d.collection)}?`)) return;
     await api(`/api/documents/${d.id}`, { method: "DELETE" });
     return refresh();
   }
@@ -98,7 +101,7 @@ async function refresh() {
 async function upload(files) {
   files = files.filter((f) => !f.name.startsWith("."));
   if (files.length === 0) return;
-  const collection = $("collection").value.trim() || "default";
+  const collection = $("collection").value || DEFAULT_COLLECTION;
   const log = $("uploadLog");
   // Send in small batches so large folders show progress.
   for (let i = 0; i < files.length; i += 10) {
@@ -110,7 +113,7 @@ async function upload(files) {
       for (const r of results) {
         const li = document.createElement("li");
         li.className = r.outcome === "rejected" ? "status-failed" : r.outcome === "unchanged" ? "muted" : "status-ready";
-        li.textContent = `${r.outcome}: ${r.collection}/${r.name}${r.error ? " — " + r.error : ""}`;
+        li.textContent = `${r.outcome}: ${collectionLabel(r.collection)} / ${r.name}${r.error ? " — " + r.error : ""}`;
         log.prepend(li);
       }
     } catch (e) {
@@ -169,7 +172,7 @@ $("searchForm").addEventListener("submit", async (e) => {
     out.innerHTML = hits.length === 0 ? `<p class="muted">No results.</p>` : hits.map((h, i) => `
       <div class="hit">
         <div class="hit-head">
-          <strong>[${i + 1}] ${esc(h.collection)}/${esc(h.documentName)} <span class="muted">${location_(h)}</span></strong>
+          <strong>[${i + 1}] ${esc(collectionLabel(h.collection))} / ${esc(h.documentName)} <span class="muted">${location_(h)}</span></strong>
           <span class="muted">score ${h.score.toFixed(4)}${h.similarity != null ? ` · similarity ${h.similarity.toFixed(2)}` : ""}${h.keywordMatch ? " · keyword match" : ""}</span>
         </div>
         ${h.headingPath ? `<div class="muted">${esc(h.headingPath)}</div>` : ""}
@@ -188,7 +191,7 @@ async function openViewer(id) {
   const [doc, chunks] = await Promise.all([api(`/api/documents/${id}`), api(`/api/documents/${id}/chunks`)]);
   viewerDoc = doc;
   viewerChunks = chunks;
-  $("viewerTitle").textContent = `${doc.collection}/${doc.name}`;
+  $("viewerTitle").textContent = `${collectionLabel(doc.collection)} / ${doc.name}`;
   $("viewerFile").href = `/api/documents/${id}/file`;
   showTab("chunks");
   $("viewer").showModal();

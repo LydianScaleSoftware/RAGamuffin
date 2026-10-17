@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using RagServer;
 using RagServer.Api;
+using RagServer.Collections;
 using RagServer.Data;
 using RagServer.Embeddings;
 using RagServer.Ingestion;
@@ -28,6 +29,7 @@ builder.Services.AddHttpClient<OllamaEmbedder>((sp, http) =>
 builder.Services.AddSingleton<FileStore>();
 builder.Services.AddSingleton<IngestQueue>();
 builder.Services.AddScoped<IngestService>();
+builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddHostedService<IngestWorker>();
 

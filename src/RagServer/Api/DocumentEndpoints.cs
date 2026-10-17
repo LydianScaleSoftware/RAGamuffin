@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using RagServer.Collections;
 using RagServer.Data;
 using RagServer.Embeddings;
 using RagServer.Ingestion;
@@ -85,11 +86,29 @@ public static class DocumentEndpoints
             return Results.Accepted();
         });
 
-        api.MapGet("/collections", async (RagDbContext db, CancellationToken ct) =>
-            await db.Documents.GroupBy(d => d.Collection)
-                .Select(g => new { Name = g.Key, Documents = g.Count(), Chunks = g.Sum(d => d.ChunkCount) })
-                .OrderBy(c => c.Name)
-                .ToListAsync(ct));
+        api.MapGet("/collections", (CollectionService collections, CancellationToken ct) => collections.ListAsync(ct));
+
+        api.MapPost("/collections", async (CreateCollectionsRequest req, CollectionService collections, CancellationToken ct) =>
+            Results.Ok(await collections.CreateAsync(req.Names ?? [], ct)));
+
+        api.MapPost("/collections/rename", async (RenameCollectionsRequest req, CollectionService collections, CancellationToken ct) =>
+        {
+            var errors = await collections.RenameAsync(req.Renames ?? [], ct);
+            return errors.Count == 0 ? Results.NoContent() : Results.BadRequest(new { errors });
+        });
+
+        api.MapPost("/collections/remove", async (RemoveCollectionsRequest req, CollectionService collections, CancellationToken ct) =>
+        {
+            var mode = req.Documents switch
+            {
+                "move" => RemoveMode.MoveToDefault,
+                "delete" => RemoveMode.DeleteDocuments,
+                _ => (RemoveMode?)null,
+            };
+            return mode is null
+                ? Results.BadRequest(new { errors = new[] { "documents must be \"move\" or \"delete\"" } })
+                : Results.Ok(await collections.RemoveAsync(req.Names ?? [], mode.Value, ct));
+        });
 
         api.MapGet("/search", async (string q, int? k, string? collection, SearchService search, CancellationToken ct) =>
             string.IsNullOrWhiteSpace(q)
@@ -126,3 +145,10 @@ public static class DocumentEndpoints
         });
     }
 }
+
+public sealed record CreateCollectionsRequest(List<string>? Names);
+
+public sealed record RenameCollectionsRequest(List<CollectionRename>? Renames);
+
+/// <summary><c>Documents</c> is "move" (to the default collection) or "delete".</summary>
+public sealed record RemoveCollectionsRequest(List<string>? Names, string? Documents);
