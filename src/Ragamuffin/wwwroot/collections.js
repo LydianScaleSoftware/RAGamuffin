@@ -136,16 +136,28 @@ $("saveBtn").addEventListener("click", async () => {
 // than a long comma-separated line, and fold back to "a, b, c" afterwards (commas, semicolons and new lines all
 // separate keywords, so either form saves the same).
 const toLines = (text) => normKeywords(text).split(", ").filter(Boolean).join("\n");
+
+// The first press on a collapsed keywords field only opens it. Letting the browser handle that press would apply
+// its caret, selection or drag to text that is being rearranged underneath it, which can scramble keywords
+// (e.g. "Modula-2" + "Debugger" became "Mo-2" + "Debuggerdula"). Once open, the text is stable and the mouse
+// behaves normally.
+$("cols").addEventListener("pointerdown", (e) => {
+  const t = e.target;
+  if (t.matches("textarea.keywords") && !t.classList.contains("editing")) {
+    e.preventDefault();
+    t.focus();
+  }
+});
+
 $("cols").addEventListener("focusin", (e) => {
   const t = e.target;
   if (t.matches("textarea.keywords")) {
     t.value = toLines(t.value);
     t.rows = Math.min(14, Math.max(6, t.value.split("\n").length + 1));
     t.classList.add("editing");
-    // Reflowing to one per line moves text under the caret, so put it somewhere predictable: a new line at the end.
-    // (Deferred, because a mouse click positions the caret after the focus event.)
+    // Put the caret somewhere predictable: a new line at the end, ready for another keyword.
     if (t.value) t.value += "\n";
-    setTimeout(() => t.setSelectionRange(t.value.length, t.value.length), 0);
+    t.setSelectionRange(t.value.length, t.value.length);
   } else if (t.matches("textarea.desc")) {
     t.rows = 6;
     t.classList.add("editing");
