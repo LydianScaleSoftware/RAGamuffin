@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol.Protocol;
 using Ragamuffin;
 using Ragamuffin.Api;
 using Ragamuffin.Collections;
@@ -56,6 +57,7 @@ builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<StatsService>();
+builder.Services.AddSingleton<McpSwitch>();
 builder.Services.AddScoped<LibraryGuide>();
 builder.Services.AddScoped<DocumentReader>();
 builder.Services.AddHttpClient<LibraryAnswerer>((sp, http) =>
@@ -77,7 +79,12 @@ builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "ragamuffin", T
         o.ConfigureSessionOptions = async (http, server, ct) =>
             server.ServerInstructions = await http.RequestServices.GetRequiredService<LibraryGuide>().InstructionsAsync(ct);
     })
-    .WithTools<RagTools>();
+    .WithTools<RagTools>()
+    // The web UI's switch: while agents are switched off, every tool call is answered with a note and does nothing.
+    .WithRequestFilters(f => f.AddCallToolFilter(next => async (context, ct) =>
+        context.Services!.GetRequiredService<McpSwitch>().Enabled
+            ? await next(context, ct)
+            : new CallToolResult { Content = [new TextContentBlock { Text = McpSwitch.OffMessage }] }));
 
 var app = builder.Build();
 
@@ -85,6 +92,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<RagDbContext>();
     await db.Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<McpSwitch>().LoadAsync(CancellationToken.None);
 }
 
 app.UseDefaultFiles();

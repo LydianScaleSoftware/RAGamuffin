@@ -5,6 +5,7 @@ using Ragamuffin.Collections;
 using Ragamuffin.Data;
 using Ragamuffin.Embeddings;
 using Ragamuffin.Ingestion;
+using Ragamuffin.Mcp;
 using Ragamuffin.Ocr;
 using Ragamuffin.Search;
 using Ragamuffin.Stats;
@@ -164,6 +165,14 @@ public static class DocumentEndpoints
                 ? Results.BadRequest("q is required")
                 : Results.Ok(await search.SearchAsync(q, k ?? 8, collection, ct)));
 
+        // The on/off switch for agents (MCP). Off makes every tool call a no-op that says so.
+        api.MapGet("/settings/agents", (McpSwitch sw) => new { enabled = sw.Enabled, changedAt = sw.ChangedAt });
+        api.MapPut("/settings/agents", async (McpSwitch sw, AgentsSetting body, CancellationToken ct) =>
+        {
+            await sw.SetAsync(body.Enabled, ct);
+            return new { enabled = sw.Enabled, changedAt = sw.ChangedAt };
+        });
+
         api.MapGet("/health", async (RagDbContext db, OllamaEmbedder embedder, IOptions<RagOptions> options, CancellationToken ct) =>
         {
             string database, ollama;
@@ -205,3 +214,5 @@ public sealed record RemoveCollectionsRequest(List<string>? Names, string? Docum
 public sealed record UpdateCollectionDetailsRequest(List<CollectionDetails>? Items);
 
 public sealed record SuggestCollectionRequest(string Name);
+
+public sealed record AgentsSetting(bool Enabled);

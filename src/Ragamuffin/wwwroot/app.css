@@ -77,6 +77,17 @@ button:disabled { opacity: .5; cursor: default; }
 .log { list-style: none; padding: 0; margin: 10px 0 0; max-height: 160px; overflow: auto; font-size: 12px; }
 .log li { padding: 2px 0; }
 
+/* ---------- agents on/off switch ---------- */
+.agents-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ok); cursor: pointer; user-select: none; }
+.agents-switch.off { color: var(--bad); }
+.agents-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.agents-switch .track { width: 30px; height: 16px; border-radius: 999px; background: var(--border); position: relative; transition: background .15s; }
+.agents-switch .thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.agents-switch input:checked + .track { background: var(--ok); }
+.agents-switch input:checked + .track .thumb { left: 16px; }
+.agents-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agents-switch input:disabled + .track { opacity: .5; }
+
 .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: currentColor; }
 .pill.bad { color: var(--bad); border-color: currentColor; }

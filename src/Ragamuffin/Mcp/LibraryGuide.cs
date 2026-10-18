@@ -19,9 +19,15 @@ public sealed record CollectionSummary(
 /// Describes the library to agents within a token budget: the MCP server instructions (added to the agent's system
 /// prompt when it connects) and the list_collections tool's answer.
 /// </summary>
-public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options)
+public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, McpSwitch mcpSwitch)
 {
     static (string Text, DateTimeOffset At)? _instructionsCache;
+
+    public const string OffInstructions =
+        "RAGamuffin, the user's document library, is switched off right now. Don't call its tools; work without it.";
+
+    /// <summary>Drops the cached instructions so a change (the on/off switch) reaches the next client at once.</summary>
+    public static void ClearCache() => _instructionsCache = null;
 
     int Budget => options.Value.Mcp.ContextTokens;
 
@@ -30,6 +36,7 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options)
 
     public async Task<string> InstructionsAsync(CancellationToken ct)
     {
+        if (!mcpSwitch.Enabled) return OffInstructions;
         if (_instructionsCache is { } c && DateTimeOffset.UtcNow - c.At < TimeSpan.FromSeconds(30)) return c.Text;
         var text = BuildInstructions(await SummariesAsync(ct), Budget);
         _instructionsCache = (text, DateTimeOffset.UtcNow);

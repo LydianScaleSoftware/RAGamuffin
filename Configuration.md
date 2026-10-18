@@ -107,6 +107,8 @@ Token budgets are estimated at about 3.5 characters per token. They're sized for
 | `AnswerMaxTokens` | `700` | Cap on the length of an answer. The model's context is set to fit both, between 4,096 and 32,768 tokens. |
 | `AnswerTimeoutSeconds` | `180` | Time limit for one answer, including loading the model. On timeout or any error, `ask_library` returns search results with a note. |
 
+The **Agents** switch in the web UI's header isn't a configuration setting: it's stored in the database (`settings` table, key `mcp.enabled`) and changed from the UI or with `PUT /api/settings/agents` and `{"enabled": false}`.
+
 ## Docker services (`docker-compose.yml`)
 
 | Item | Value | Notes |

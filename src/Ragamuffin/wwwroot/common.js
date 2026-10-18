@@ -45,3 +45,36 @@ async function checkHealth() {
     el.className = "pill bad";
   }
 }
+
+/** The header switch that lets agents (MCP clients such as opencode) use the library, or turns their calls into no-ops. */
+async function initAgentsSwitch() {
+  const box = $("agents-enabled");
+  if (!box) return;
+  const show = (s) => {
+    box.checked = s.enabled;
+    $("agents-label").textContent = s.enabled ? "Agents on" : "Agents off";
+    box.closest("label").classList.toggle("off", !s.enabled);
+  };
+  try {
+    show(await api("/api/settings/agents"));
+    box.disabled = false;
+  } catch {
+    $("agents-label").textContent = "Agents ?";
+    return;
+  }
+  box.addEventListener("change", async () => {
+    box.disabled = true;
+    try {
+      show(await api("/api/settings/agents", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: box.checked }),
+      }));
+    } catch (e) {
+      box.checked = !box.checked;
+      alert(`Couldn't change the agents setting: ${e.message}`);
+    } finally {
+      box.disabled = false;
+    }
+  });
+}
+
+initAgentsSwitch();

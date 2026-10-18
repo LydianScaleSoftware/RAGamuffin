@@ -328,6 +328,28 @@ namespace Ragamuffin.Data.Migrations
                     b.ToTable("document_pages", (string)null);
                 });
 
+            modelBuilder.Entity("Ragamuffin.Data.Setting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("key");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("value");
+
+                    b.HasKey("Key")
+                        .HasName("pk_settings");
+
+                    b.ToTable("settings", (string)null);
+                });
+
             modelBuilder.Entity("Ragamuffin.Data.Chunk", b =>
                 {
                     b.HasOne("Ragamuffin.Data.Document", "Document")

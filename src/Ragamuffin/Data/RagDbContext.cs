@@ -10,10 +10,18 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
     public DbSet<Chunk> Chunks => Set<Chunk>();
     public DbSet<Collection> Collections => Set<Collection>();
     public DbSet<DocumentPage> Pages => Set<DocumentPage>();
+    public DbSet<Setting> Settings => Set<Setting>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.HasPostgresExtension("vector");
+
+        model.Entity<Setting>(e =>
+        {
+            e.ToTable("settings");
+            e.HasKey(x => x.Key);
+            e.Property(x => x.Key).HasMaxLength(100);
+        });
 
         model.Entity<Collection>(e =>
         {

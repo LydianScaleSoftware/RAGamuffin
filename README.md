@@ -105,6 +105,8 @@ Tools exposed (all read-only). Every answer is kept to a small token budget so i
 - `list_documents(filter?, collection?)`: names, types and sizes; `filter` matches part of a name.
 - `list_collections(collection?)`: what each collection covers (description, keywords), its size and example titles.
 
+**Agents on/off.** The switch in the page header turns agent access off without disconnecting anything: while it's off, every tool call returns a one-line note saying the library is switched off (nothing is searched), and newly connecting clients are told not to use it. The setting is stored in the database, so it survives restarts and redeploys.
+
 When a client connects, the server also sends **instructions** that clients add to the model's system prompt: when to use the tools, plus each collection's name, size, description and keywords. They're generated live from the Collections page, so the agent knows what the library holds without notes in `AGENTS.md` or `CLAUDE.md`. Both the instructions and the `list_collections` answer are kept within 512 tokens (`Rag:Mcp:ContextTokens`). Detail is trimmed first (keywords, then description length), and only then are the smallest collections summarized as "…and N more". Clients read instructions when they connect, so edits show up in the next session.
 
 ## Managing documents
