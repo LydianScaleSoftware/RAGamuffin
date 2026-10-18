@@ -28,6 +28,7 @@ public sealed class LibraryAnswerer(HttpClient http, SearchService search, IOpti
             return LeanText.FormatSearch(question, passages, options.Value.Mcp.SearchTokens);
 
         var context = BuildContext(question, passages, Opt.AnswerContextTokens);
+        log.LogDebug("ask_library context for {Question}:\n{Context}", question, context);
         try
         {
             var answer = await GenerateAsync(question, context, null, ct);
@@ -39,7 +40,8 @@ public sealed class LibraryAnswerer(HttpClient http, SearchService search, IOpti
                 var retry = await GenerateAsync(question, context, (answer,
                     $"These names do not appear in the passages: {string.Join(", ", unsupported)}. " +
                     $"Calls the passages do show: {string.Join(", ", CallsIn(context).Take(30))}. " +
-                    "Rewrite the answer using only those, or say the passages don't cover that part."), ct);
+                    "Rewrite the answer using only those and standard C library functions (printf, puts, …) where a passage describes " +
+                    "standard input or output, or say the passages don't cover that part."), ct);
                 var retryUnsupported = UnsupportedCalls(retry, passages);
                 log.LogInformation("ask_library retried after unsupported calls {Before}; now {After}", unsupported, retryUnsupported);
                 if (!string.IsNullOrWhiteSpace(retry) && retryUnsupported.Count < unsupported.Count)
@@ -120,7 +122,17 @@ public sealed class LibraryAnswerer(HttpClient http, SearchService search, IOpti
         }
     }
 
-    static readonly HashSet<string> Keywords = ["if", "while", "for", "switch", "return", "sizeof", "main", "do", "else", "case"];
+    /// <summary>Language keywords and standard C library functions: manuals describe these ("text written to standard
+    /// out") without naming them, so they aren't treated as invented.</summary>
+    static readonly HashSet<string> Keywords =
+    [
+        "if", "while", "for", "switch", "return", "sizeof", "main", "do", "else", "case",
+        "printf", "fprintf", "sprintf", "snprintf", "puts", "fputs", "putchar", "putc", "fputc", "scanf", "fscanf", "sscanf",
+        "getchar", "getc", "fgetc", "gets", "fgets", "fopen", "fclose", "fread", "fwrite", "fflush", "malloc", "calloc",
+        "realloc", "free", "exit", "abs", "atoi", "atol", "atof", "strtol", "strlen", "strcpy", "strncpy", "strcat",
+        "strncat", "strcmp", "strncmp", "strchr", "strstr", "memcpy", "memmove", "memset", "memcmp", "sin", "cos", "tan",
+        "sqrt", "pow", "floor", "ceil", "fabs", "rand", "srand", "time", "clock",
+    ];
 
     /// <summary>
     /// Names the answer calls like functions (<c>Name(</c>) that appear in none of the retrieved passages: the usual

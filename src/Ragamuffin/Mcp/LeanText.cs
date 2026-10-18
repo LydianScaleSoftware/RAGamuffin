@@ -146,8 +146,10 @@ public static partial class LeanText
     }
 
     /// <summary>
-    /// The part of <paramref name="text"/> (at most <paramref name="maxChars"/>) with the most query terms, cut at line
-    /// boundaries, marked with "…" where text was left out. Code lines stay intact.
+    /// The parts of <paramref name="text"/> (at most <paramref name="maxChars"/> in all) that cover the most query terms,
+    /// cut at line boundaries and marked with "…" where text was left out. Rare terms count more than common ones, a
+    /// term already covered counts less, and lines close together are kept together so code stays readable. Leftover
+    /// room goes to the lines after each selected part.
     /// </summary>
     public static string Excerpt(string text, IReadOnlyList<string> terms, int maxChars)
     {
@@ -155,30 +157,101 @@ public static partial class LeanText
         if (text.Length <= maxChars) return text;
 
         var lines = text.Split('\n');
-        // Very long lines (prose without breaks) are split into sentences so the window can still move.
+        // Very long lines (prose without breaks) are split into sentences so selection can still pick parts.
         if (lines.Length < 4) lines = SentenceSplit(text);
-        var scores = lines.Select(l => terms.Count == 0 ? 0 : terms.Count(t => l.Contains(t, StringComparison.OrdinalIgnoreCase))).ToArray();
-
-        int bestStart = 0, bestEnd = 0, bestScore = -1;
-        for (var start = 0; start < lines.Length; start++)
-        {
-            var len = 0;
-            var score = 0;
-            var end = start;
-            while (end < lines.Length && len + lines[end].Length + 1 <= maxChars)
-            {
-                len += lines[end].Length + 1;
-                score += scores[end];
-                end++;
-            }
-            if (end == start) continue;
-            if (score > bestScore) { bestScore = score; bestStart = start; bestEnd = end; }
-        }
-        if (bestScore < 0)
+        var has = lines.Select(l => terms.Where(t => l.Contains(t, StringComparison.OrdinalIgnoreCase)).ToList()).ToArray();
+        // A line that keeps coming back to a term ("text" six times) is more likely about it than one mentioning it once.
+        var tf = lines.Select(l => terms.ToDictionary(t => t, t => 1 + Math.Log(Math.Max(1, Occurrences(l, t))))).ToArray();
+        if (terms.Count == 0 || has.All(h => h.Count == 0))
             return text[..Math.Max(0, maxChars - 1)].TrimEnd() + "…";
 
-        var body = string.Join('\n', lines[bestStart..bestEnd]).Trim();
-        return (bestStart > 0 ? "…" : "") + body + (bestEnd < lines.Length ? "…" : "");
+        // Inverse document frequency over lines: a term in every line says little about where the answer is.
+        var weight = terms.ToDictionary(t => t, t => Math.Log(1 + lines.Length / (1.0 + has.Count(h => h.Contains(t)))));
+        var chosen = new bool[lines.Length];
+        var covered = new HashSet<string>();
+        int Cost(int i) => lines[i].Length + 1;
+        var used = 0;
+
+        // First cover every term once, preferring rare terms and, only mildly, shorter lines: the line that alone
+        // mentions "text" matters more than a short line repeating a common word.
+        while (true)
+        {
+            var best = -1;
+            var bestGain = 0.0;
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (chosen[i] || used + Cost(i) + 2 > maxChars) continue;
+                var gain = has[i].Where(t => !covered.Contains(t)).Sum(t => weight[t] * tf[i][t]) / Math.Pow(Cost(i) + 40, 0.25);
+                if (gain > bestGain) { bestGain = gain; best = i; }
+            }
+            if (best < 0) break;
+            chosen[best] = true;
+            used += Cost(best) + 2;
+            covered.UnionWith(has[best]);
+        }
+
+        // Then the next most relevant lines (a second paragraph on the same point, a function's prototype), within three
+        // quarters of the room left; the rest goes to context after them.
+        var repeatLimit = used + (maxChars - used) * 3 / 4;
+        while (true)
+        {
+            var best = -1;
+            var bestGain = 0.0;
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (chosen[i] || has[i].Count == 0 || used + Cost(i) + 2 > repeatLimit) continue;
+                var gain = has[i].Sum(t => weight[t] * tf[i][t]) / Math.Pow(Cost(i) + 40, 0.25);
+                if (gain > bestGain) { bestGain = gain; best = i; }
+            }
+            if (best < 0) break;
+            chosen[best] = true;
+            used += Cost(best) + 2;
+        }
+
+        // Then join chosen lines that are close together, so a few related lines read as one passage.
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!chosen[i]) continue;
+            var j = i + 1;
+            while (j < lines.Length && !chosen[j] && j - i <= 4) j++;
+            if (j >= lines.Length || !chosen[j] || j == i + 1) continue;
+            var extra = Enumerable.Range(i + 1, j - i - 1).Sum(Cost) - 2;
+            if (used + extra > maxChars) continue;
+            for (var k = i + 1; k < j; k++) chosen[k] = true;
+            used += extra;
+        }
+
+        // Spend what's left on the lines following each selected part (an explanation's example, a listing's body).
+        for (var grew = true; grew;)
+        {
+            grew = false;
+            for (var i = 0; i < lines.Length - 1; i++)
+            {
+                if (!chosen[i] || chosen[i + 1] || used + Cost(i + 1) > maxChars) continue;
+                chosen[i + 1] = true;
+                used += Cost(i + 1);
+                grew = true;
+                i++;
+            }
+        }
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!chosen[i]) continue;
+            if (i == 0 || !chosen[i - 1]) sb.Append(sb.Length == 0 ? (i > 0 ? "…" : "") : "\n…\n");
+            else sb.Append('\n');
+            sb.Append(lines[i]);
+        }
+        if (!chosen[^1]) sb.Append('…');
+        return sb.ToString();
+    }
+
+    static int Occurrences(string line, string term)
+    {
+        var n = 0;
+        for (var i = line.IndexOf(term, StringComparison.OrdinalIgnoreCase); i >= 0; i = line.IndexOf(term, i + term.Length, StringComparison.OrdinalIgnoreCase)) n++;
+        return n;
     }
 
     static string[] SentenceSplit(string text) =>

@@ -64,6 +64,19 @@ public class LeanTextTests
     }
 
     [Fact]
+    public void Excerpt_picks_separate_parts_that_cover_different_terms()
+    {
+        var lines = Enumerable.Range(1, 60).Select(i => $"filler line {i} about the screen and quickdraw tools").ToList();
+        lines[10] = "After startgraph, text written with printf is drawn by QuickDraw; use MoveTo to place the text.";
+        lines[50] = "void startgraph(int width); starts QuickDraw II.";
+        var excerpt = LeanText.Excerpt(string.Join('\n', lines), LeanText.QueryTerms("start QuickDraw and draw text on the screen with startgraph"), 400);
+        Assert.Contains("text written with printf", excerpt);
+        Assert.Contains("void startgraph(int width)", excerpt);
+        Assert.Contains("\n…\n", excerpt);
+        Assert.True(excerpt.Length <= 410, $"{excerpt.Length} chars");
+    }
+
+    [Fact]
     public void Dedent_removes_shared_indentation_but_keeps_code_structure()
     {
         Assert.Equal("int main (void)\n{\n    startgraph(320);\n}", LeanText.Dedent("    int main (void)\n    {\n        startgraph(320);\n    }"));
@@ -223,7 +236,7 @@ public class LibraryAnswererTests
     public void Calls_missing_from_the_sources_are_flagged()
     {
         var passages = new[] { P("manual.txt", "startgraph(640);\nMoveTo(280, 40);\nprintf(\"Hello\");") };
-        var answer = "```c\nint main(void) {\n    startgraph(640);\n    MoveTo(10, 10);\n    TextOut(10, 10, \"Hi\");\n    if (x) return 0;\n}\n```";
+        var answer = "```c\nint main(void) {\n    startgraph(640);\n    MoveTo(10, 10);\n    TextOut(10, 10, \"Hi\");\n    puts(\"x\");\n    if (x) return 0;\n}\n```";
         Assert.Equal(["TextOut"], LibraryAnswerer.UnsupportedCalls(answer, passages));
         Assert.Contains("WARNING: not found in the sources, may be invented: TextOut", LibraryAnswerer.FormatAnswer(answer, passages, "m", ["TextOut"]));
     }
