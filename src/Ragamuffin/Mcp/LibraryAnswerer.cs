@@ -20,7 +20,7 @@ public sealed class LibraryAnswerer(HttpClient http, SearchService search, IOpti
     public async Task<string> AskAsync(string question, string? collection, CancellationToken ct)
     {
         var hits = await search.SearchAsync(question, Candidates, collection, ct);
-        var passages = LeanText.Dedupe(LeanText.Merge(hits)).Take(6).ToList();
+        var passages = LeanText.Dedupe(LeanText.Merge(hits), question).Take(6).ToList();
         if (passages.Count == 0)
             return $"Nothing in the library matches \"{question}\". Try different words or an exact identifier.";
 
@@ -57,17 +57,28 @@ public sealed class LibraryAnswerer(HttpClient http, SearchService search, IOpti
         }
     }
 
-    /// <summary>Numbered passages for the answer model, excerpted around the question's terms to fit the budget.</summary>
+    /// <summary>
+    /// Numbered passages for the answer model, excerpted around the question's terms to fit the budget. Room a short
+    /// passage doesn't need goes to the longer ones, so a listing isn't cut off before its last lines.
+    /// </summary>
     public static string BuildContext(string question, IReadOnlyList<Passage> passages, int budgetTokens)
     {
         var terms = LeanText.QueryTerms(question);
-        var each = Math.Max(300, LeanText.Chars(budgetTokens) / Math.Max(1, passages.Count));
+        var allowance = new int[passages.Count];
+        var left = LeanText.Chars(budgetTokens);
+        // Fill shortest first: each passage gets its fair share of what's left, or all it needs if that's less.
+        foreach (var i in Enumerable.Range(0, passages.Count).OrderBy(i => passages[i].Text.Trim().Length))
+        {
+            var share = left / (passages.Count - allowance.Count(a => a > 0));
+            allowance[i] = Math.Min(passages[i].Text.Trim().Length, Math.Max(300, share));
+            left = Math.Max(0, left - allowance[i]);
+        }
         var sb = new StringBuilder();
         for (var i = 0; i < passages.Count; i++)
         {
             var p = passages[i];
             sb.Append($"[{i + 1}] {p.DocumentName}" + (p.Location.Length > 0 ? $", {p.Location}" : "") + (p.Heading is { } h ? $" — {h}" : "") + "\n");
-            sb.Append(LeanText.Excerpt(p.Text, terms, each)).Append("\n\n");
+            sb.Append(LeanText.Excerpt(p.Text, terms, allowance[i])).Append("\n\n");
         }
         return sb.ToString().TrimEnd();
     }
@@ -136,9 +147,10 @@ public sealed class LibraryAnswerer(HttpClient http, SearchService search, IOpti
 
     /// <summary>
     /// Names the answer calls like functions (<c>Name(</c>) that appear in none of the retrieved passages: the usual
-    /// way a small model goes wrong is inventing a plausible toolbox call.
+    /// way a small model goes wrong is inventing a plausible toolbox call. No space before the parenthesis, so prose like
+    /// "the position (50, 50)" isn't taken for a call.
     /// </summary>
-    static readonly Regex CallPattern = new(@"\b([A-Za-z_]\w{2,})\s*\(");
+    static readonly Regex CallPattern = new(@"\b([A-Za-z_]\w{2,})\(");
 
     /// <summary>Distinct names written like function calls, in order of appearance.</summary>
     public static IEnumerable<string> CallsIn(string text) =>

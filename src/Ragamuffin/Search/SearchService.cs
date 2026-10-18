@@ -57,6 +57,10 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
             .Select(c => c.Id)
             .Take(candidates)
             .ToListAsync(ct);
+        // Every word must match above, so a question with one word the passage lacks ("ORCA/C" in a toolbox manual's
+        // Hello World listing) finds nothing; fill up with chunks that cover the most distinctive words.
+        if (keyword.Count < candidates)
+            keyword.AddRange((await CoverageAsync(query, string.IsNullOrWhiteSpace(collection) ? null : collection, candidates, ct)).Where(id => !keyword.Contains(id)).Take(candidates - keyword.Count));
 
         var fused = Fuse(semantic.Select(s => s.Id).ToList(), keyword, topK);
         if (fused.Count == 0) return [];
@@ -85,6 +89,26 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
                 r.Content);
         }).ToList();
     }
+
+    /// <summary>
+    /// Chunks matching any word of the query, best first by the summed rarity (inverse document frequency) of the
+    /// distinct words they contain, so "hello" and "world" outweigh "program".
+    /// </summary>
+    async Task<List<long>> CoverageAsync(string query, string? collection, int limit, CancellationToken ct) =>
+        await db.Database.SqlQuery<long>($"""
+            with terms as materialized (
+                select quote_literal(l)::tsquery tq,
+                       ln((select count(*) from chunks)::float / (1 + (select count(*) from chunks c where c.tsv @@ quote_literal(l)::tsquery))) idf
+                from unnest(tsvector_to_array(to_tsvector('english', {query}))) l),
+            any_term as materialized (select string_agg(tq::text, ' | ')::tsquery q from terms)
+            select c.id as "Value"
+            from chunks c join documents d on d.id = c.document_id, any_term a
+            where a.q is not null and c.tsv @@ a.q
+              and d.status in ({DocumentStatus.Ready}, {DocumentStatus.Ocr})
+              and ({collection}::text is null or d.collection = {collection})
+            order by (select sum(t.idf) from terms t where c.tsv @@ t.tq) desc, ts_rank_cd(c.tsv, a.q) desc
+            limit {limit}
+            """).ToListAsync(ct);
 
     /// <summary>Reciprocal rank fusion of two ranked id lists.</summary>
     public static List<(long Id, double Score)> Fuse(IReadOnlyList<long> semantic, IReadOnlyList<long> keyword, int topK)

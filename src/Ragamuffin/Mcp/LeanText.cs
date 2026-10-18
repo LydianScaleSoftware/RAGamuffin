@@ -58,14 +58,15 @@ public static partial class LeanText
         .ToList();
 
     /// <summary>
-    /// Merges hits that are consecutive chunks of the same document (keeping the better rank), removing the overlap the
-    /// chunker repeats between neighbours.
+    /// Merges hits that are consecutive chunks of the same document, removing the overlap the chunker repeats between
+    /// neighbours. Passages are ranked by their chunks' summed scores: two neighbouring chunks that both matched (an
+    /// explanation and the listing after it) are better evidence than either alone.
     /// </summary>
     public static List<Passage> Merge(IReadOnlyList<SearchHit> hits)
     {
         var used = new HashSet<long>();
         var byKey = hits.ToDictionary(h => (h.DocumentId, h.Ordinal));
-        var passages = new List<Passage>();
+        var passages = new List<(Passage P, double Score)>();
         foreach (var hit in hits)
         {
             if (!used.Add(hit.ChunkId)) continue;
@@ -76,12 +77,12 @@ public static partial class LeanText
 
             var text = run[0].Content;
             foreach (var next in run.Skip(1)) text = JoinOverlapping(text, next.Content);
-            passages.Add(new Passage(
+            passages.Add((new Passage(
                 hit.DocumentName, hit.Collection, run.Select(r => r.HeadingPath).FirstOrDefault(h => h is not null),
                 run[0].StartLine, run[^1].EndLine ?? run[^1].StartLine,
-                run[0].Page, run[^1].Page, run.Any(r => r.Ocr), Dedent(text), []));
+                run[0].Page, run[^1].Page, run.Any(r => r.Ocr), Dedent(text), []), run.Sum(r => r.Score)));
         }
-        return passages;
+        return passages.OrderByDescending(p => p.Score).Select(p => p.P).ToList();
     }
 
     const int MaxRun = 3;
@@ -108,25 +109,52 @@ public static partial class LeanText
 
     /// <summary>
     /// Drops passages that mostly repeat a better-ranked one (the same text in two editions of a manual), noting where
-    /// else the text appears.
+    /// else the text appears. When the repeat has different code (a C and a Pascal manual share whole lessons but not
+    /// their listings), the one from the document whose name better fits <paramref name="query"/> is kept: "ORCA/C"
+    /// picks "Toolbox C" over "Toolbox Pascal".
     /// </summary>
-    public static List<Passage> Dedupe(IReadOnlyList<Passage> passages, double threshold = 0.6)
+    public static List<Passage> Dedupe(IReadOnlyList<Passage> passages, string? query = null, double threshold = 0.6)
     {
-        var kept = new List<(Passage P, HashSet<string> Shingles)>();
+        var kept = new List<(Passage P, HashSet<string> Shingles, HashSet<string> Code)>();
         foreach (var p in passages)
         {
             var shingles = Shingles(p.Text);
+            var code = CodeLines(p.Text);
             var dup = kept.FindIndex(k => Similarity(k.Shingles, shingles) >= threshold);
-            if (dup >= 0)
+            if (dup < 0)
             {
-                var also = kept[dup].P.AlsoIn;
-                if (!also.Contains(p.DocumentName) && p.DocumentName != kept[dup].P.DocumentName) also.Add(p.DocumentName);
+                kept.Add((p, shingles, code));
                 continue;
             }
-            kept.Add((p, shingles));
+            var (keep, drop) = (kept[dup].P, p);
+            var otherCode = kept[dup].Code.Count > 0 && code.Count > 0 && Similarity(kept[dup].Code, code) < 0.5;
+            if (otherCode && query is not null && NameFit(p.DocumentName, query) > NameFit(keep.DocumentName, query))
+            {
+                (keep, drop) = (p with { AlsoIn = [.. kept[dup].P.AlsoIn] }, kept[dup].P);
+                kept[dup] = (keep, shingles, code);
+            }
+            if (!keep.AlsoIn.Contains(drop.DocumentName) && drop.DocumentName != keep.DocumentName) keep.AlsoIn.Add(drop.DocumentName);
         }
         return kept.Select(k => k.P).ToList();
     }
+
+    /// <summary>How many words of a document's name the query uses ("ORCA/C" and "GS-20 Toolbox C.txt" share "c").</summary>
+    static int NameFit(string documentName, string query)
+    {
+        static IEnumerable<string> Words(string s) => WordRegex().Matches(s.ToLowerInvariant()).Select(m => m.Value);
+        var asked = Words(query).Where(w => !StopWords.Contains(w)).ToHashSet();
+        return Words(Path.GetFileNameWithoutExtension(documentName)).Distinct().Count(asked.Contains);
+    }
+
+    [GeneratedRegex(@"[a-z]+(?:-\d+)?")]
+    private static partial Regex WordRegex();
+
+    /// <summary>Lines that look like code (end in ; { or }, or start with #), without whitespace.</summary>
+    static HashSet<string> CodeLines(string text) => text.Split('\n')
+        .Select(l => l.Trim())
+        .Where(l => l.Length > 1 && (l[^1] is ';' or '{' or '}' || l[0] == '#'))
+        .Select(l => string.Concat(l.Where(c => !char.IsWhiteSpace(c))).ToLowerInvariant())
+        .ToHashSet();
 
     static HashSet<string> Shingles(string text)
     {

@@ -36,7 +36,7 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         var wanted = Math.Clamp(top_k ?? Mcp.DefaultResults, 1, 10);
         // Fetch extra candidates: merging neighbours and dropping duplicates can shrink the list.
         var hits = await search.SearchAsync(query, Math.Min(40, wanted * 4), collection, ct);
-        var passages = LeanText.Dedupe(LeanText.Merge(hits)).Take(wanted).ToList();
+        var passages = LeanText.Dedupe(LeanText.Merge(hits), query).Take(wanted).ToList();
         return LeanText.FormatSearch(query, passages, Mcp.SearchTokens);
     }
 

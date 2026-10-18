@@ -8,8 +8,8 @@ public class LeanTextTests
     static readonly Guid DocA = Guid.NewGuid();
     static readonly Guid DocB = Guid.NewGuid();
 
-    static SearchHit Hit(Guid doc, string name, long chunk, int ordinal, string content, int? page = null, int? start = null, int? end = null) =>
-        new(doc, name, "orca/goldengate", "text", chunk, ordinal, "Graphics", start, end, page, false, null, 0.03, 0.8, false, content);
+    static SearchHit Hit(Guid doc, string name, long chunk, int ordinal, string content, int? page = null, int? start = null, int? end = null, double score = 0.03) =>
+        new(doc, name, "orca/goldengate", "text", chunk, ordinal, "Graphics", start, end, page, false, null, score, 0.8, false, content);
 
     static Passage P(string name, string text) => new(name, "c", null, 1, 10, null, null, false, text, []);
 
@@ -42,6 +42,34 @@ public class LeanTextTests
         Assert.Equal("manual.txt", passages[0].DocumentName);
         Assert.Equal("four\nfive", passages[0].Text);
         Assert.Equal("lines 40-60", passages[0].Location);
+    }
+
+    [Fact]
+    public void An_explanation_and_its_listing_outrank_a_single_better_chunk()
+    {
+        // "Hello World in a graphics program": the Drawing Text explanation and Listing 10-1 each rank mid-list, but
+        // together they are the answer and must not fall behind single chunks that merely mention "Hello, world".
+        var hits = new[]
+        {
+            Hit(DocB, "ORCA_M.txt", 9, 40, "the words Hello world! should be written to the screen", score: 0.03),
+            Hit(DocA, "Toolbox C.txt", 1, 560, "Drawing Text\nHere's a short program that writes \"Hello, world.\"", score: 0.016),
+            Hit(DocA, "Toolbox C.txt", 2, 561, "DrawCString(\"Hello, world.\");\nListing 10-1", score: 0.015),
+        };
+        var passages = LeanText.Merge(hits);
+        Assert.Equal(["Toolbox C.txt", "ORCA_M.txt"], passages.Select(p => p.DocumentName));
+    }
+
+    [Fact]
+    public void Of_one_lesson_with_different_code_the_document_the_question_names_is_kept()
+    {
+        var prose = string.Join(' ', Enumerable.Repeat("To actually write text to the screen, all you do is pass a string to QuickDraw.", 4));
+        var pascal = P("Toolbox Pascal.txt", prose + "\nbegin\nStartGraph(320);\nPenNormal;\nDrawString(@\"Hello, world.\");\nreadln;\nEndGraph;\nend.");
+        var c = P("Toolbox C.txt", prose + "\n#include <orca.h>\n{\nstartgraph(320);\nPenNormal();\nDrawCString(\"Hello, world.\");\nendgraph();\n}");
+        var kept = Assert.Single(LeanText.Dedupe([pascal, c], "How do I write Hello World in a graphics program with ORCA/C?"));
+        Assert.Equal("Toolbox C.txt", kept.DocumentName);
+        Assert.Equal(["Toolbox Pascal.txt"], kept.AlsoIn);
+        Assert.Equal("Toolbox Pascal.txt", Assert.Single(LeanText.Dedupe([pascal, c], "Hello World in ORCA/Pascal")).DocumentName);
+        Assert.Equal("Toolbox C.txt", Assert.Single(LeanText.Dedupe([c, P("Toolbox Pascal 2.0.txt", c.Text)], "Pascal")).DocumentName);
     }
 
     [Fact]
@@ -223,6 +251,16 @@ public class LibraryAnswererTests
     }
 
     [Fact]
+    public void Room_short_passages_leave_goes_to_a_long_listing()
+    {
+        // The spiral listing ends with endgraph(); an even split of the budget cut it off before that line.
+        var listing = string.Join('\n', Enumerable.Range(1, 60).Select(i => $"   LineTo({i}, {i}); /* step {i} */")) + "\nendgraph();";
+        var context = LibraryAnswerer.BuildContext("startgraph", [P("short1.txt", "startgraph starts QuickDraw."), P("listing.txt", "startgraph(640);\n" + listing), P("short2.txt", "Use startgraph.")], 800);
+        Assert.Contains("endgraph();", context);
+        Assert.True(LeanText.Tokens(context) <= 850, $"{LeanText.Tokens(context)} tokens");
+    }
+
+    [Fact]
     public void Answer_lists_sources_with_ready_to_use_reads()
     {
         var text = LibraryAnswerer.FormatAnswer("Use startgraph(320) [1].", [P("Toolbox C.txt", "x"), P("book.pdf", "y", page: 12)], "qwen3:8b");
@@ -239,5 +277,13 @@ public class LibraryAnswererTests
         var answer = "```c\nint main(void) {\n    startgraph(640);\n    MoveTo(10, 10);\n    TextOut(10, 10, \"Hi\");\n    puts(\"x\");\n    if (x) return 0;\n}\n```";
         Assert.Equal(["TextOut"], LibraryAnswerer.UnsupportedCalls(answer, passages));
         Assert.Contains("WARNING: not found in the sources, may be invented: TextOut", LibraryAnswerer.FormatAnswer(answer, passages, "m", ["TextOut"]));
+    }
+
+    [Fact]
+    public void Prose_before_parentheses_is_not_a_call()
+    {
+        var passages = new[] { P("manual.txt", "MoveTo(50, 50);\nDrawCString(\"Hello, world.\");") };
+        var answer = "It moves the pen to the position (50, 50), then calls DrawCString(\"Hello, world.\") [1].";
+        Assert.Empty(LibraryAnswerer.UnsupportedCalls(answer, passages));
     }
 }
