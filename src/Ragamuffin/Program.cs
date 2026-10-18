@@ -57,6 +57,13 @@ builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<StatsService>();
 builder.Services.AddScoped<LibraryGuide>();
+builder.Services.AddScoped<DocumentReader>();
+builder.Services.AddHttpClient<LibraryAnswerer>((sp, http) =>
+{
+    var opt = sp.GetRequiredService<IOptions<RagOptions>>().Value;
+    http.BaseAddress = new Uri(opt.OllamaUrl.TrimEnd('/') + "/");
+    http.Timeout = Timeout.InfiniteTimeSpan; // the answerer applies its own timeout
+});
 builder.Services.AddHostedService<IngestWorker>();
 
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = rag.MaxUploadBytes * 10);

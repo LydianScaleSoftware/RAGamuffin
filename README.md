@@ -39,22 +39,22 @@ MCP clients are optional: opencode, Claude Code, or anything that speaks MCP ove
 |---|---|---|---|---|
 | `nomic-embed-text` | Embedding every chunk and every search query | 0.3 GB | **Yes** | `Rag:EmbeddingModel` |
 | `glm-ocr` | OCR of scanned PDF pages | 2.7 GB | Only for OCR | `Rag:Ocr:Model` |
-| `qwen3:8b`, or any chat model that can answer in JSON | **Suggest** on the Collections page | 5.2 GB | Only for Suggest | `Rag:Collections:SuggestModel` |
+| `qwen3:8b`, or any small instruction-following chat model | **Suggest** on the Collections page, and the `ask_library` MCP tool | 5.2 GB | Recommended | `Rag:Collections:SuggestModel`, `Rag:Mcp:AnswerModel` |
 
 ```bash
 ollama pull nomic-embed-text
 ollama pull glm-ocr
-ollama pull qwen3:8b      # optional, for Suggest
+ollama pull qwen3:8b      # recommended, for Suggest and ask_library
 ```
 
-Suggest only writes a sentence or two and a keyword list, so a small model is plenty; any instruction-following chat model works.
+Suggest only writes a sentence or two and a keyword list, and `ask_library` writes a short answer from a few retrieved passages, so a small model is plenty. A fast 8B model answering in one call costs the agent far less time and context than letting a big coding model search and read for itself.
 
-Without `glm-ocr`, scanned PDFs stay at **needs OCR** and **Run OCR** is disabled with an explanation. Without the Suggest model, **Suggest** reports an error, and descriptions can still be typed by hand.
+Without `glm-ocr`, scanned PDFs stay at **needs OCR** and **Run OCR** is disabled with an explanation. Without the Suggest model, **Suggest** reports an error, and descriptions can still be typed by hand. Without the answer model, `ask_library` returns plain search results instead of an answer.
 
 ### Ollama server
 
 - **Reachable over the network** when it runs on another machine. On that machine, set `OLLAMA_HOST=0.0.0.0` so Ollama listens beyond localhost. Point `Rag:OllamaUrl` at it (here `http://10.10.10.2:11434`).
-- **Room for two or three models at once.** During OCR batches the indexing lane embeds with `nomic-embed-text` while the analysis lane OCRs with `glm-ocr`. If a coding model is also loaded for opencode, that's three. Set `OLLAMA_MAX_LOADED_MODELS` to at least 2, or 3 to keep the coding model loaded, and make sure memory allows it. On `tb` (32 GB), for example: a 35B coding model for opencode ≈ 22 GB, `glm-ocr` ≈ 3–4 GB with its 16K context, `nomic-embed-text` ≈ 0.3 GB, and `qwen3:8b` ≈ 5–6 GB while Suggest runs.
+- **Room for two or three models at once.** During OCR batches the indexing lane embeds with `nomic-embed-text` while the analysis lane OCRs with `glm-ocr`. If a coding model is also loaded for opencode, that's three. Set `OLLAMA_MAX_LOADED_MODELS` to at least 2, or 3 to keep the coding model loaded, and make sure memory allows it. On `tb` (32 GB), for example: a 35B coding model for opencode ≈ 22 GB, `glm-ocr` ≈ 3–4 GB with its 16K context, `nomic-embed-text` ≈ 0.3 GB, and `qwen3:8b` ≈ 5–6 GB while Suggest or `ask_library` runs. While an agent is working, `ask_library` needs its own model loaded next to the agent's and `nomic-embed-text`, so set `OLLAMA_MAX_LOADED_MODELS=3`; with 2, each `ask_library` call evicts the agent's model and both reload in turn, which is slow.
 - **No server-side tuning is required.** RAGamuffin sends its own per-request options (context size, output cap, temperature, `keep_alive`); OCR asks Ollama to unload `glm-ocr` 5 minutes after the last page.
 
 ### Disk space
@@ -97,11 +97,12 @@ To run it permanently as a launchd agent that starts at login, use `scripts/inst
 claude mcp add --transport http --scope user rag http://localhost:5077/mcp
 ```
 
-Tools exposed (all read-only):
+Tools exposed (all read-only). Every answer is kept to a small token budget so it fits a local model's context, and ends with the exact call to read more:
 
-- `search_documents(query, top_k=8, collection?)`: ranked passages with file, line range or page, and section.
-- `list_documents(collection?)`
-- `get_document(name_or_id, collection?)`: full extracted text, truncated above 60k characters.
+- `ask_library(question, collection?)`: one-step answer. Retrieves the best passages and has a small local model (`Rag:Mcp:AnswerModel`, default `qwen3:8b`) write a short answer that quotes code exactly and cites its sources, each with a ready-made `get_document` call. Falls back to search results if the model isn't available.
+- `search_documents(query, top_k=5, collection?)`: cited excerpts (up to 10). Neighbouring chunks of one document are merged, near-duplicates from other editions are dropped and noted as "also in", and each excerpt is trimmed around the query's words.
+- `get_document(name_or_id, pages?, lines?, section?, collection?)`: reads part of a document. With no range it returns the outline (headings with line or page numbers); `pages="12-14"`, `lines="120-200"` or `section="Drawing Text"` read just that part, ending with how to continue. Partial names work.
+- `list_documents(filter?, collection?)`: names, types and sizes; `filter` matches part of a name.
 - `list_collections(collection?)`: what each collection covers (description, keywords), its size and example titles.
 
 When a client connects, the server also sends **instructions** that clients add to the model's system prompt: when to use the tools, plus each collection's name, size, description and keywords. They're generated live from the Collections page, so the agent knows what the library holds without notes in `AGENTS.md` or `CLAUDE.md`. Both the instructions and the `list_collections` answer are kept within 512 tokens (`Rag:Mcp:ContextTokens`). Detail is trimmed first (keywords, then description length), and only then are the smallest collections summarized as "…and N more". Clients read instructions when they connect, so edits show up in the next session.

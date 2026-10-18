@@ -22,9 +22,6 @@ public sealed class RagOptions
     /// <summary>Largest file accepted per upload. A request may carry up to ten times this (the UI sends files in tens).</summary>
     public long MaxUploadBytes { get; set; } = 500L * 1024 * 1024;
 
-    /// <summary>get_document truncates full text above this many characters.</summary>
-    public int MaxDocumentChars { get; set; } = 60_000;
-
     public OcrOptions Ocr { get; set; } = new();
     public LayoutOptions Layout { get; set; } = new();
     public CollectionOptions Collections { get; set; } = new();
@@ -47,6 +44,32 @@ public sealed class McpOptions
     /// system prompt, and the list_collections tool's answer. Estimated at about 3.5 characters per token.
     /// </summary>
     public int ContextTokens { get; set; } = 512;
+
+    /// <summary>Results search_documents returns when the agent doesn't ask for a number (max 10).</summary>
+    public int DefaultResults { get; set; } = 5;
+
+    /// <summary>Token budget for one search_documents answer; passages are excerpted around the query terms to fit.</summary>
+    public int SearchTokens { get; set; } = 1500;
+
+    /// <summary>Token budget for one get_document answer (an outline, or the requested pages, lines or section).</summary>
+    public int DocumentTokens { get; set; } = 2000;
+
+    /// <summary>Token budget for one list_documents answer.</summary>
+    public int ListTokens { get; set; } = 800;
+
+    /// <summary>
+    /// Ollama model that writes ask_library's answers from retrieved passages. Set to "" to make ask_library return
+    /// plain search results instead.
+    /// </summary>
+    public string AnswerModel { get; set; } = "qwen3:8b";
+
+    /// <summary>Token budget for the passages given to the answer model.</summary>
+    public int AnswerContextTokens { get; set; } = 3000;
+
+    /// <summary>Longest answer the answer model may write, in tokens.</summary>
+    public int AnswerMaxTokens { get; set; } = 700;
+
+    public int AnswerTimeoutSeconds { get; set; } = 180;
 }
 
 /// <summary>Page layout analysis (orientation, regions, reading order, tables) by the layout service.</summary>

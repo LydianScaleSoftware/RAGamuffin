@@ -87,9 +87,10 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options)
     {
         var docs = collections.Sum(c => c.Documents);
         var header =
-            $"RAGamuffin searches the user's own document library ({docs:N0} documents in {collections.Count} collection{(collections.Count == 1 ? "" : "s")}). " +
-            "When a question may be answered by these documents, call search_documents and cite the document and page or lines used. " +
-            "Pass `collection` when one clearly fits; call list_collections for more detail.";
+            $"RAGamuffin holds the user's own document library ({docs:N0} documents in {collections.Count} collection{(collections.Count == 1 ? "" : "s")}). " +
+            "For questions these documents may answer: call ask_library first (one call, cited answer); " +
+            "use search_documents for specific passages, then get_document with pages=/lines=/section= to read around a result. " +
+            "Never read whole documents. Cite document and page or lines. Pass `collection` when one clearly fits; list_collections describes each.";
         if (collections.Count == 0)
             return "RAGamuffin searches the user's own document library, which is empty right now.";
         return Fit(header, "Collections:", collections, budgetTokens, InstructionLevels, FormatInstructionLine);
