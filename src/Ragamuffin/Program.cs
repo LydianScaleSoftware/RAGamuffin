@@ -54,12 +54,14 @@ builder.Services.AddHttpClient<CollectionSuggester>((sp, http) =>
 builder.Services.AddSingleton<FileStore>();
 builder.Services.AddSingleton<IngestQueue>();
 builder.Services.AddScoped<IngestService>();
+builder.Services.AddScoped<ClaudeIndexer>();
 builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<StatsService>();
 builder.Services.AddSingleton<McpSwitch>();
 builder.Services.AddScoped<LibraryGuide>();
 builder.Services.AddScoped<DocumentReader>();
+builder.Services.AddSingleton<LocalFiles>();
 builder.Services.AddHttpClient<LibraryAnswerer>((sp, http) =>
 {
     var opt = sp.GetRequiredService<IOptions<RagOptions>>().Value;
@@ -71,7 +73,7 @@ builder.Services.AddHostedService<IngestWorker>();
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = rag.MaxUploadBytes * 10);
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = rag.MaxUploadBytes * 10);
 
-builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "ragamuffin", Title = "RAGamuffin", Version = "1.0.0" })
+var mcp = builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "ragamuffin", Title = "RAGamuffin", Version = "1.0.0" })
     .WithHttpTransport(o =>
     {
         o.Stateless = true;
@@ -80,11 +82,20 @@ builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "ragamuffin", T
             server.ServerInstructions = await http.RequestServices.GetRequiredService<LibraryGuide>().InstructionsAsync(ct);
     })
     .WithTools<RagTools>()
-    // The web UI's switch: while agents are switched off, every tool call is answered with a note and does nothing.
+    .WithTools<PageTools>()
+    .WithTools<LibraryWriteTools>()
+    // The web UI's switches: with agents off, every tool call is answered with a note and does nothing; with writing
+    // off, so are the tools that change the library.
     .WithRequestFilters(f => f.AddCallToolFilter(next => async (context, ct) =>
-        context.Services!.GetRequiredService<McpSwitch>().Enabled
-            ? await next(context, ct)
-            : new CallToolResult { Content = [new TextContentBlock { Text = McpSwitch.OffMessage }] }));
+    {
+        var sw = context.Services!.GetRequiredService<McpSwitch>();
+        if (!sw.Enabled) return new CallToolResult { Content = [new TextContentBlock { Text = McpSwitch.OffMessage }] };
+        if (!sw.WritesEnabled && LibraryWriteTools.Names.Contains(context.Params?.Name ?? ""))
+            return new CallToolResult { Content = [new TextContentBlock { Text = McpSwitch.WriteOffMessage }] };
+        return await next(context, ct);
+    }));
+// ask_library only when an answer model is configured.
+if (!string.IsNullOrWhiteSpace(rag.Mcp.AnswerModel)) mcp.WithTools<AskTools>();
 
 var app = builder.Build();
 

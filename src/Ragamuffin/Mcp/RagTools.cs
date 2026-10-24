@@ -9,39 +9,31 @@ using Ragamuffin.Search;
 namespace Ragamuffin.Mcp;
 
 /// <summary>
-/// The MCP tools. Descriptions are deliberately short (they're sent with every request) and every answer fits a token
-/// budget sized for small local models, with a hint for reading more.
+/// The read-only MCP tools. Every answer fits a token budget (Rag:Mcp), sized for Claude, with a hint for reading more.
 /// </summary>
 [McpServerToolType]
 public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide guide, DocumentReader reader,
-    LibraryAnswerer answerer, IOptions<RagOptions> options)
+    IOptions<RagOptions> options)
 {
     McpOptions Mcp => options.Value.Mcp;
 
-    [McpServerTool(Name = "ask_library", ReadOnly = true)]
-    [Description("Answer a question from the user's document library in one step: a short answer with code quoted exactly and cited sources. Start here.")]
-    public Task<string> AskLibrary(
-        [Description("The question, e.g. \"How does an ORCA/C program start QuickDraw II?\"")] string question,
-        [Description("Limit to one collection.")] string? collection = null,
-        CancellationToken ct = default) => answerer.AskAsync(question, collection, ct);
-
     [McpServerTool(Name = "search_documents", ReadOnly = true)]
-    [Description("Find passages in the user's document library. Returns short cited excerpts; read more around one with get_document.")]
+    [Description("Search the user's document library (manuals, references, code) by meaning and by exact words. Returns cited passages with their chunk ids; get_chunk returns a chunk whole, get_document reads around it. If the first search misses, rephrase with the terms the manual itself would use.")]
     public async Task<string> SearchDocuments(
-        [Description("Question or keywords; exact identifiers work.")] string query,
-        [Description("Number of results (default 5, max 10).")] int? top_k = null,
+        [Description("Question or keywords; exact identifiers (DrawCString, $A604) work.")] string query,
+        [Description("Number of results (default 8, max 25).")] int? top_k = null,
         [Description("Limit to one collection.")] string? collection = null,
         CancellationToken ct = default)
     {
-        var wanted = Math.Clamp(top_k ?? Mcp.DefaultResults, 1, 10);
+        var wanted = Math.Clamp(top_k ?? Mcp.DefaultResults, 1, 25);
         // Fetch extra candidates: merging neighbours and dropping duplicates can shrink the list.
-        var hits = await search.SearchAsync(query, Math.Min(40, wanted * 4), collection, ct);
+        var hits = await search.SearchAsync(query, Math.Min(50, wanted * 4), collection, ct);
         var passages = LeanText.Dedupe(LeanText.Merge(hits), query).Take(wanted).ToList();
         return LeanText.FormatSearch(query, passages, Mcp.SearchTokens);
     }
 
     [McpServerTool(Name = "get_document", ReadOnly = true)]
-    [Description("Read part of a document: its outline by default, or only pages=, lines= or section=.")]
+    [Description("Read a document: its outline by default, or pages=, lines= or section=. Long reads end with where to continue.")]
     public Task<string> GetDocument(
         [Description("Document name (partial names work) or id.")] string name_or_id,
         [Description("PDF pages, e.g. \"12\" or \"12-14\".")] string? pages = null,
@@ -50,8 +42,60 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         [Description("Collection, if the name exists in several.")] string? collection = null,
         CancellationToken ct = default) => reader.ReadAsync(name_or_id, collection, pages, lines, section, ct);
 
+    [McpServerTool(Name = "get_chunk", ReadOnly = true)]
+    [Description("Return chunks whole, by the ids search results show, with their title, summary, location and the chunks around them if asked.")]
+    public async Task<string> GetChunk(
+        [Description("Chunk ids from search results, e.g. [48213] or [48213, 48214].")] List<long> ids,
+        [Description("Also return this many chunks before and after each one (default 0, max 3).")] int neighbors = 0,
+        CancellationToken ct = default)
+    {
+        if (ids is not { Count: > 0 }) return "No chunk ids given.";
+        neighbors = Math.Clamp(neighbors, 0, 3);
+        var anchors = await db.Chunks.AsNoTracking().Where(c => ids.Contains(c.Id))
+            .Select(c => new { c.Id, c.DocumentId, c.Ordinal }).ToListAsync(ct);
+        if (anchors.Count == 0) return "No chunks with those ids (they change when a document is re-indexed; search again).";
+
+        var wanted = anchors.SelectMany(a => Enumerable.Range(a.Ordinal - neighbors, 2 * neighbors + 1).Select(o => (a.DocumentId, o))).ToHashSet();
+        var docIds = anchors.Select(a => a.DocumentId).Distinct().ToList();
+        var minOrd = anchors.Min(a => a.Ordinal) - neighbors;
+        var maxOrd = anchors.Max(a => a.Ordinal) + neighbors;
+        var rows = (await db.Chunks.AsNoTracking()
+                .Where(c => docIds.Contains(c.DocumentId) && c.Ordinal >= minOrd && c.Ordinal <= maxOrd)
+                .Select(c => new
+                {
+                    c.Id, c.DocumentId, c.Ordinal, c.Content, c.HeadingPath, c.Title, c.Summary, c.Kind, c.Symbol,
+                    c.StartLine, c.EndLine, c.Page, c.PageEnd, c.Ocr, c.Document.Name, c.Document.Collection,
+                })
+                .ToListAsync(ct))
+            .Where(c => wanted.Contains((c.DocumentId, c.Ordinal)))
+            .OrderBy(c => c.Name).ThenBy(c => c.Ordinal).ToList();
+
+        var budget = LeanText.Chars(Mcp.DocumentTokens);
+        var sb = new StringBuilder();
+        var shown = 0;
+        foreach (var c in rows)
+        {
+            var p = new Passage(c.Name, c.Collection, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.PageEnd, c.Ocr, c.Content, [])
+            {
+                ChunkIds = [c.Id], Title = c.Title, Summary = c.Summary, Kind = c.Kind, Symbol = c.Symbol,
+            };
+            var block = $"[{LeanText.Citation(p)}]{(ids.Contains(c.Id) ? "" : " (neighbour)")}\n" +
+                        (c.Summary is null ? "" : $"Summary: {c.Summary}\n") + c.Content + "\n\n";
+            if (shown > 0 && sb.Length + block.Length > budget)
+            {
+                sb.Append($"…{rows.Count - shown} more chunk(s) didn't fit; ask for fewer ids at a time.");
+                break;
+            }
+            sb.Append(block);
+            shown++;
+        }
+        var missing = ids.Except(anchors.Select(a => a.Id)).ToList();
+        if (missing.Count > 0) sb.Append($"\nNo chunks with id {string.Join(", ", missing)} (re-indexed since; search again).");
+        return sb.ToString().TrimEnd();
+    }
+
     [McpServerTool(Name = "list_documents", ReadOnly = true)]
-    [Description("Find documents by name; returns names, types and sizes.")]
+    [Description("Find documents by name; returns names, types, sizes, chunk counts and conversions.")]
     public async Task<string> ListDocuments(
         [Description("Part of a document name, e.g. \"toolbox\".")] string? filter = null,
         [Description("Limit to one collection.")] string? collection = null,
@@ -61,7 +105,12 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         if (!string.IsNullOrWhiteSpace(collection)) q = q.Where(d => d.Collection == collection.Trim());
         if (!string.IsNullOrWhiteSpace(filter)) q = q.Where(d => EF.Functions.ILike(d.Name, $"%{filter.Trim()}%"));
         var docs = await q.OrderBy(d => d.Collection).ThenBy(d => d.Name)
-            .Select(d => new { d.Collection, d.Name, d.ContentType, d.Language, d.PageCount, d.ChunkCount, d.Status, d.OcrPages })
+            .Select(d => new
+            {
+                d.Collection, d.Name, d.ContentType, d.Language, d.PageCount, d.ChunkCount, d.Status, d.OcrPages, d.ChunkSource,
+                Source = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
+                ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).Select(o => o.Name).FirstOrDefault(),
+            })
             .ToListAsync(ct);
         if (docs.Count == 0)
             return "No documents match" + (filter is null ? "" : $" \"{filter}\"") + (collection is null ? "" : $" in {collection}") + ".";
@@ -75,7 +124,10 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
             var line = new StringBuilder();
             if (d.Collection != current) line.Append($"{d.Collection}:\n");
             var kind = d.ContentType == "pdf" ? $"pdf, {d.PageCount} pages{(d.OcrPages > 0 ? ", OCR" : "")}" : d.Language ?? d.ContentType;
-            line.Append($"- {d.Name} ({kind}{(d.Status == DocumentStatus.Ready ? "" : ", " + d.Status.Replace('_', ' '))})\n");
+            line.Append($"- {d.Name} ({kind}, {d.ChunkCount} chunks{(d.ChunkSource == ChunkSources.Claude ? " chosen by Claude" : "")}" +
+                        $"{(d.Status == DocumentStatus.Ready ? "" : ", " + d.Status.Replace('_', ' '))})" +
+                        (d.Source is null ? "" : $" — converted from {d.Source}") +
+                        (d.ConvertedTo is null ? "" : $" — searched through its conversion {d.ConvertedTo}") + "\n");
             if (sb.Length + line.Length > budget - 90) break;
             sb.Append(line);
             current = d.Collection;

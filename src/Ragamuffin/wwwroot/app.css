@@ -88,6 +88,9 @@ button:disabled { opacity: .5; cursor: default; }
 .agents-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .agents-switch input:disabled + .track { opacity: .5; }
 
+.badge.claude { color: #b45309; border-color: currentColor; }
+.chunk-summary { font-style: italic; color: var(--muted); margin: 2px 0 4px; }
+
 .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: currentColor; }
 .pill.bad { color: var(--bad); border-color: currentColor; }

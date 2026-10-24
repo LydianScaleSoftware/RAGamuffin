@@ -13,6 +13,15 @@ public static class DocumentStatus
     public const string Ocr = "ocr";
 }
 
+public static class ChunkSources
+{
+    /// <summary>The server's chunker cut the text.</summary>
+    public const string Auto = "auto";
+
+    /// <summary>Claude chose the chunk boundaries (add_document / set_chunks); re-indexing keeps them.</summary>
+    public const string Claude = "claude";
+}
+
 public sealed class Document
 {
     public Guid Id { get; set; }
@@ -53,6 +62,15 @@ public sealed class Document
 
     /// <summary>When the queued or running analysis job was requested; pages finished since then count as done on resume.</summary>
     public DateTimeOffset? OcrRequestedAt { get; set; }
+
+    /// <summary>Who chose the chunk boundaries: <see cref="ChunkSources.Auto"/> or <see cref="ChunkSources.Claude"/>.</summary>
+    public string ChunkSource { get; set; } = ChunkSources.Auto;
+
+    /// <summary>
+    /// The document this one was made from, e.g. the PDF a Markdown conversion came from. While this document is
+    /// ready, the source's own chunks are left out of search so results aren't duplicated.
+    /// </summary>
+    public Guid? SourceDocumentId { get; set; }
 
     /// <summary>Full extracted text, filled in once ingestion succeeds.</summary>
     public string? Text { get; set; }

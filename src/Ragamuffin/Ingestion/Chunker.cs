@@ -263,13 +263,27 @@ public sealed partial class Chunker(ChunkerSettings settings)
     }
 
     /// <summary>Text sent to the embedding model: a short context header plus the chunk.</summary>
-    public static string EmbeddingText(string documentName, ExtractedDocument doc, ChunkDraft chunk)
+    public static string EmbeddingText(string documentName, ExtractedDocument doc, ChunkDraft chunk) =>
+        EmbeddingText(documentName, doc.Language, chunk.HeadingPath, chunk.Page, null, null, null, chunk.Content, int.MaxValue);
+
+    /// <summary>
+    /// Text sent to the embedding model: document, section, page, title and symbol on the first line, then the summary,
+    /// then the content cut to <paramref name="maxChars"/> in all. The model only reads its first 2,048 tokens, so what
+    /// describes the chunk comes first.
+    /// </summary>
+    public static string EmbeddingText(string documentName, string? language, string? headingPath, int? page,
+        string? title, string? symbol, string? summary, string content, int maxChars)
     {
         var sb = new StringBuilder(documentName);
-        if (doc.Language != null) sb.Append(" (").Append(doc.Language).Append(')');
-        if (chunk.HeadingPath != null) sb.Append(" > ").Append(chunk.HeadingPath);
-        if (chunk.Page != null) sb.Append(" p.").Append(chunk.Page);
-        sb.Append('\n').Append(chunk.Content);
+        if (language != null) sb.Append(" (").Append(language).Append(')');
+        if (headingPath != null) sb.Append(" > ").Append(headingPath);
+        if (page != null) sb.Append(" p.").Append(page);
+        if (title != null) sb.Append(" | ").Append(title);
+        if (symbol != null && symbol != title) sb.Append(" | ").Append(symbol);
+        if (!string.IsNullOrWhiteSpace(summary)) sb.Append('\n').Append(summary.Trim());
+        sb.Append('\n');
+        var room = Math.Max(0, maxChars - sb.Length);
+        sb.Append(content.Length <= room ? content : content[..room]);
         return sb.ToString();
     }
 }

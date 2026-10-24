@@ -22,7 +22,17 @@ public sealed record SearchHit(
     double Score,
     double? Similarity,
     bool KeywordMatch,
-    string Content);
+    string Content)
+{
+    public string? Title { get; init; }
+    public string? Summary { get; init; }
+    public string? Kind { get; init; }
+    public string? Symbol { get; init; }
+    public int? PageEnd { get; init; }
+
+    /// <summary>True when Claude chose this chunk's boundaries; such chunks are whole units and aren't merged.</summary>
+    public bool ClaudeChunk { get; init; }
+}
 
 /// <summary>
 /// Hybrid retrieval: pgvector cosine search and Postgres full-text search, merged with
@@ -39,9 +49,14 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
         var candidates = Math.Max(topK * 4, 20);
         var queryVector = new Vector(await embedder.EmbedQueryAsync(query, ct));
 
-        // A document being OCR'd keeps serving its previous chunks until the run finishes.
+        // A document being OCR'd keeps serving its previous chunks until the run finishes. Pages of a PDF that a ready
+        // conversion covers (by its chunks' page ranges) are left out, so the same text isn't found twice; a conversion
+        // without page numbers covers the whole PDF.
         var chunks = db.Chunks.AsNoTracking()
-            .Where(c => c.Document.Status == DocumentStatus.Ready || c.Document.Status == DocumentStatus.Ocr);
+            .Where(c => c.Document.Status == DocumentStatus.Ready || c.Document.Status == DocumentStatus.Ocr)
+            .Where(c => !db.Documents.Any(o => o.SourceDocumentId == c.DocumentId && o.Status == DocumentStatus.Ready &&
+                (!o.Chunks.Any(k => k.Page != null) ||
+                 o.Chunks.Any(k => k.Page <= c.Page && (k.PageEnd ?? k.Page) >= c.Page))));
         if (!string.IsNullOrWhiteSpace(collection))
             chunks = chunks.Where(c => c.Document.Collection == collection);
 
@@ -72,6 +87,7 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
             {
                 c.Id, c.DocumentId, c.Document.Name, c.Document.Collection, c.Document.ContentType,
                 c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.Content, c.Ocr, c.Document.OcrModel,
+                c.Title, c.Summary, c.Kind, c.Symbol, c.PageEnd, c.Document.ChunkSource,
             })
             .ToDictionaryAsync(c => c.Id, ct);
 
@@ -86,7 +102,11 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
                 Math.Round(f.Score, 5),
                 distances.TryGetValue(f.Id, out var d) ? Math.Round(1 - d, 4) : null,
                 keywordSet.Contains(f.Id),
-                r.Content);
+                r.Content)
+            {
+                Title = r.Title, Summary = r.Summary, Kind = r.Kind, Symbol = r.Symbol, PageEnd = r.PageEnd,
+                ClaudeChunk = r.ChunkSource == ChunkSources.Claude,
+            };
         }).ToList();
     }
 
@@ -105,6 +125,10 @@ public sealed class SearchService(RagDbContext db, OllamaEmbedder embedder)
             from chunks c join documents d on d.id = c.document_id, any_term a
             where a.q is not null and c.tsv @@ a.q
               and d.status in ({DocumentStatus.Ready}, {DocumentStatus.Ocr})
+              and not exists (select 1 from documents o where o.source_document_id = d.id and o.status = {DocumentStatus.Ready}
+                  and (not exists (select 1 from chunks k where k.document_id = o.id and k.page is not null)
+                       or exists (select 1 from chunks k where k.document_id = o.id
+                                  and c.page between k.page and coalesce(k.page_end, k.page))))
               and ({collection}::text is null or d.collection = {collection})
             order by (select sum(t.idf) from terms t where c.tsv @@ t.tq) desc, ts_rank_cd(c.tsv, a.q) desc
             limit {limit}

@@ -44,6 +44,13 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
     }
 
     /// <summary>Finds a document by id, exact name, case-insensitive name, file name, or a unique partial match.</summary>
+    /// <summary>The id of the one document a name (forgiving: partial names work) or id refers to, or why there isn't one.</summary>
+    public async Task<(Guid? Id, string Name, string? Problem)> ResolveIdAsync(string nameOrId, string? collection, CancellationToken ct)
+    {
+        var (doc, problem) = await ResolveAsync(nameOrId, collection, ct);
+        return (doc?.Id, doc?.Name ?? "", problem);
+    }
+
     async Task<(DocInfo? Doc, string? Problem)> ResolveAsync(string nameOrId, string? collection, CancellationToken ct)
     {
         var q = db.Documents.AsNoTracking();

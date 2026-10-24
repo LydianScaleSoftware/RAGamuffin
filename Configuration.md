@@ -32,10 +32,11 @@ In the tables below, *default* is the value built into the code; where the check
 | Setting | Default | What it does |
 |---|---|---|
 | `Rag:OllamaUrl` | `http://10.10.10.2:11434` | Ollama server used for embeddings, OCR, Suggest and `ask_library`. |
-| `Rag:EmbeddingModel` | `nomic-embed-text` | Model that embeds chunks and search queries. It must produce **768-dimensional** vectors (see [Changing models](#changing-models)). |
+| `Rag:EmbeddingModel` | `qwen3-embedding:0.6b` | Model that embeds chunks and search queries. It must produce **1,024-dimensional** vectors (see [Changing models](#changing-models)). |
 | `Rag:EmbeddingBatchSize` | `32` | Chunks sent per `/api/embed` request. |
-| `Rag:DocumentPrefix` | `search_document: ` | Text put before every chunk when embedding. nomic-embed-text is trained with these prefixes; use `""` for models that aren't. |
-| `Rag:QueryPrefix` | `search_query: ` | Text put before every search query when embedding. |
+| `Rag:DocumentPrefix` | *(empty)* | Text put before every chunk when embedding. qwen3-embedding takes documents as they are (nomic-embed-text wanted `search_document: `). |
+| `Rag:QueryPrefix` | `Instruct: Given a question about the user's documents, retrieve the passages that answer it` + newline + `Query: ` | Text put before every search query when embedding: the task instruction qwen3-embedding is trained with (nomic-embed-text wanted `search_query: `). Naming the library's subject helps: `appsettings.json` here uses "…a question about programming the Apple IIgs, retrieve the passage from a technical manual…", which found the right passage in the top five for 23 of 30 test questions against 21 with the generic wording. Changing it needs no re-index; documents are embedded without a prefix. |
+| `Rag:EmbeddingMaxChars` | `60000` | Longest text embedded per chunk: the header, title and summary, then the chunk's text cut to fit. Enough for the largest chunk Claude may define; qwen3-embedding reads 32,768 tokens. |
 
 ## Chunking
 
@@ -45,7 +46,7 @@ In the tables below, *default* is the value built into the code; where the check
 | `Rag:ChunkMaxChars` | `1800` | Hard cap on a chunk's size. |
 | `Rag:ChunkOverlapChars` | `150` | Trailing text carried into the next chunk so passages aren't cut off mid-thought. |
 
-The sizes keep chunks comfortably inside nomic-embed-text's 2,048-token context. Changes apply to documents indexed afterwards; re-index existing documents to re-chunk them.
+These apply to the server's own chunking; documents Claude adds with its own chunks aren't affected. Changes apply to documents indexed afterwards; re-index existing documents to re-chunk them (`POST /api/reindex-all` re-indexes everything).
 
 ## OCR (`Rag:Ocr`)
 
@@ -89,25 +90,23 @@ The layout service (`layout-service/`, PaddleOCR PP-StructureV3 in Docker) finds
 
 ## MCP (`Rag:Mcp`)
 
-Token budgets are estimated at about 3.5 characters per token and sized for local models with small contexts; raise them for large hosted models.
+Token budgets are estimated at about 3.5 characters per token and sized for Claude's large context.
 
 | Setting | Default | What it does |
 |---|---|---|
-Token budgets are estimated at about 3.5 characters per token. They're sized for local models with small contexts; raise them for large hosted models.
-
-| Setting | Default | What it does |
-|---|---|---|
-| `ContextTokens` | `512` | Token budget for each block of text an agent receives about the library: the server instructions sent when a client connects (added to its system prompt), and the `list_collections` answer. Estimated at about 3.5 characters per token. When text doesn't fit, keywords and descriptions are shortened first, then the smallest collections are summarized as "…and N more". |
-| `DefaultResults` | `5` | Results `search_documents` returns when the agent doesn't pass `top_k` (it may ask for up to 10). |
-| `SearchTokens` | `1500` | Budget for one `search_documents` answer. Higher-ranked results get a larger share; each is excerpted around the query's words. |
-| `DocumentTokens` | `2000` | Budget for one `get_document` answer (an outline, or the requested pages, lines or section). Longer ranges are cut with a hint for where to continue. |
-| `ListTokens` | `800` | Budget for one `list_documents` answer; the rest is summarized as "…and N more". |
-| `AnswerModel` | `qwen3:8b` | Ollama chat model that writes `ask_library` answers. Thinking is switched off. Empty (`""`) makes `ask_library` return search results instead. |
+| `ContextTokens` | `2000` | Token budget for each block of text an agent receives about the library: the server instructions sent when a client connects (added to its system prompt), and the `list_collections` answer. When text doesn't fit, keywords and descriptions are shortened first, then the smallest collections are summarized as "…and N more". |
+| `DefaultResults` | `8` | Results `search_documents` returns when the agent doesn't pass `top_k` (it may ask for up to 25). |
+| `SearchTokens` | `12000` | Budget for one `search_documents` answer. Higher-ranked results get a larger share; a passage longer than its share is excerpted around the query's words (`get_chunk` returns it whole). |
+| `DocumentTokens` | `25000` | Budget for one `get_document` or `get_chunk` answer. Longer reads are cut with a hint for where to continue. |
+| `ListTokens` | `6000` | Budget for one `list_documents` answer; the rest is summarized as "…and N more". |
+| `ImportRoots` | *(empty: your home folder)* | Folders `import_file` and `add_document` may read files from, as a list: `["/Users/me/Manuals", "/Users/me/src"]`. Paths outside them are refused. |
+| `MaxChunkChars` | `60000` | Largest chunk Claude may define with `add_document` or `set_chunks`. |
+| `AnswerModel` | *(empty)* | Ollama chat model for the optional `ask_library` tool, which writes a short answer from retrieved passages. Empty leaves the tool out, since Claude reads the passages itself. Set it (e.g. `qwen3:8b`) for smaller agents. |
 | `AnswerContextTokens` | `3000` | How much retrieved text the answer model is given (up to six passages, excerpted to fit). |
 | `AnswerMaxTokens` | `700` | Cap on the length of an answer. The model's context is set to fit both, between 4,096 and 32,768 tokens. |
 | `AnswerTimeoutSeconds` | `180` | Time limit for one answer, including loading the model. On timeout or any error, `ask_library` returns search results with a note. |
 
-The **Agents** switch in the web UI's header isn't a configuration setting: it's stored in the database (`settings` table, key `mcp.enabled`) and changed from the UI or with `PUT /api/settings/agents` and `{"enabled": false}`.
+The **Agents read** and **Agents write** switches in the web UI's header aren't configuration settings: they're stored in the database (`settings` table, keys `mcp.enabled` and `mcp.write`) and changed from the UI or with `PUT /api/settings/agents` and `{"enabled": false}` or `{"writes": false}`.
 
 ## Docker services (`docker-compose.yml`)
 
@@ -132,27 +131,14 @@ The script publishes into a clean `publish/` folder, then reloads the agent. Int
 
 ## MCP clients
 
-**opencode** (V2 configuration, `~/.config/opencode/opencode.json`):
-
-```json
-"mcp": {
-  "servers": {
-    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false, "codemode": false }
-  }
-}
-```
-
-The key (`rag`) prefixes the tool names the model sees, e.g. `rag_search_documents`; short is better for local models.
-
-`"oauth": false` stops opencode from trying to sign in to the server, which needs no authentication. `"codemode": false` exposes the tools as ordinary tool calls. opencode's default *Code Mode* has the model write JavaScript to call MCP tools, which local models often get wrong: a common failure is calling a tool without `await`, which opencode reports as `JSON.stringify received an un-awaited Promise`. With only five tools, Code Mode's advantage (handling many tools efficiently) doesn't apply.
-
 **Claude Code:**
 
 ```bash
 claude mcp add --transport http --scope user rag http://localhost:5077/mcp
+scripts/install-skills.sh
 ```
 
-The server identifies itself as `ragamuffin` and sends its own usage instructions, so no extra prompt notes are needed in `AGENTS.md` or `CLAUDE.md`.
+The key (`rag`) prefixes the tool names Claude sees, e.g. `mcp__rag__search_documents`. The server identifies itself as `ragamuffin` and sends its own usage instructions, so no notes are needed in `CLAUDE.md`. `scripts/install-skills.sh` links the skills in `skills/` into `~/.claude/skills` (links, so they follow the repo).
 
 ## Fixed in code
 
@@ -160,22 +146,25 @@ These aren't settings; changing them means editing the code.
 
 | Value | Where | Notes |
 |---|---|---|
-| Embedding dimensions: 768 | `RagDbContext.EmbeddingDimensions` | The database column is `vector(768)`. |
+| Embedding dimensions: 1,024 | `RagDbContext.EmbeddingDimensions` | The database column is `vector(1024)`. pgvector's HNSW index takes at most 2,000 dimensions, so larger models (qwen3-embedding:4b has 2,560) would need `halfvec`. |
 | A page "has text" with 20+ non-space characters | `PdfPages.MinUsefulChars` | Fewer counts as blank (needs OCR). |
 | Headers and footers dropped only when ≤ 15 words | `LayoutAssembler.MaxFurnitureWords` | Longer "footer" regions (notes, legends) are kept. |
 | Rebuilt tables abandoned when a cell holds ≥ 3 line breaks | `LayoutAssembler.MaxLinesPerCell` | The table then keeps the PDF's own content order. |
 | Hybrid search: reciprocal rank fusion with k = 60; at least 20 candidates from each of vector and full-text search | `SearchService` | Full-text search first requires every word; when that finds too few, it adds chunks matching any word, ranked by how rare the matched words are. |
-| Results per search: up to 50 (web UI/API), up to 10 (MCP) | `SearchService`, `RagTools` | MCP search fetches four times as many candidates, then merges and de-duplicates them. |
-| MCP passages merge at most 3 consecutive chunks and rank by their chunks' summed scores; when duplicates differ in code, the one from the document whose name the question mentions is kept; passages sharing ≥ 60% of their 5-word phrases count as duplicates | `LeanText.MaxRun`, `LeanText.Dedupe` | Keeps one manual's many editions from filling the results. |
+| Results per search: up to 50 (web UI/API), up to 25 (MCP) | `SearchService`, `RagTools` | MCP search fetches four times as many candidates (at most 50), then merges and de-duplicates them. |
+| MCP passages merge at most 3 consecutive server-made chunks (Claude's chunks are never merged) and rank by their chunks' summed scores; when duplicates differ in code, the one from the document whose name the question mentions is kept; passages sharing ≥ 60% of their 5-word phrases count as duplicates | `LeanText.MaxRun`, `LeanText.Dedupe` | Keeps one manual's many editions from filling the results. |
 | Excerpts pick the lines that cover the most query terms (rare terms and repeated mentions count more), then join nearby lines and add the lines that follow | `LeanText.Excerpt` | Used for search results and for the passages `ask_library` sends its model. |
 | `ask_library` retrieves 24 candidates and answers from the best 6 passages. Any name the answer calls like a function (`Name(`) that isn't in those passages triggers one rewrite with the list of calls the passages do show; if some remain, the answer carries a warning naming them. Language keywords and standard C library functions (`printf`, `strlen`, …) are exempt, since manuals describe them without naming them | `LibraryAnswerer` | Small models tend to invent plausible toolbox calls. |
 | Outlines of plain-text documents come from detected headings: short capitalized lines after a blank line or outdented from the next line; "Chapter", "Part", "Appendix"… start top-level entries | `DocumentReader.DetectHeadings` | Markdown headings are used when present; PDFs without headings fall back to each page's opening line. |
+| A conversion hides the PDF pages its chunks cover (by their `pages`); a conversion without page numbers hides the whole PDF | `SearchService` | Lets a manual be converted chapter by chapter. |
+| Claude's chunks: whole lines, in order, not overlapping; uncovered lines with text are reported back | `ChunkPlan` | |
+| Pages "need review" when they have no usable text, embedded text that looks garbled, or only glm-ocr's reading | `PageTools.NeedsReview` | A page Claude saved or confirmed no longer needs review; a later glm-ocr run doesn't replace Claude's text. |
 | Collection names ≤ 100 characters; descriptions ≤ 1,000 characters; up to 20 keywords of ≤ 60 characters | `CollectionRules` | |
 | Batch time estimates assume about 45 seconds per page | `app.js`, `stats.js` | Display only. |
 | OCR/layout availability cached 15 s; MCP instructions cached 30 s | `OcrEngine`, `LayoutClient`, `LibraryGuide` | |
 
 ## Changing models
 
-- **Embedding model.** A model with a different vector size needs a database migration to change `vector(768)`, and every document has to be re-embedded (re-indexed). A model with the same size only needs a re-index, because vectors from different models can't be compared. Also review `DocumentPrefix`/`QueryPrefix`, which are specific to nomic-embed-text.
+- **Embedding model.** A model with a different vector size needs a database migration to change `vector(1024)`, and every document has to be re-embedded: `POST /api/reindex-all` (about 40 minutes for the current library). A model with the same size only needs the re-index, because vectors from different models can't be compared. Also set `DocumentPrefix`/`QueryPrefix` to what the new model expects.
 - **OCR model.** Existing OCR text stays as it is; each page records the model that read it (shown in the OCR badge tooltip and on the Stats page). To re-read pages with the new model, use **Re-index… → Replace text with local OCR**, or **Process…**. For reasoning models, also set `Rag:Ocr:Think` to `false`.
 - **Suggest and answer models.** Nothing else changes; they're only used for **Suggest** and `ask_library`. Using the same model for both keeps one fewer model loaded on the Ollama server.

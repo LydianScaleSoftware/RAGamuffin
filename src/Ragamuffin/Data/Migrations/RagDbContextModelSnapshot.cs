@@ -45,7 +45,7 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnName("document_id");
 
                     b.Property<Vector>("Embedding")
-                        .HasColumnType("vector(768)")
+                        .HasColumnType("vector(1024)")
                         .HasColumnName("embedding");
 
                     b.Property<int?>("EndLine")
@@ -55,6 +55,11 @@ namespace Ragamuffin.Data.Migrations
                     b.Property<string>("HeadingPath")
                         .HasColumnType("text")
                         .HasColumnName("heading_path");
+
+                    b.Property<string>("Kind")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("kind");
 
                     b.Property<bool>("Ocr")
                         .HasColumnType("boolean")
@@ -68,9 +73,27 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("page");
 
+                    b.Property<int?>("PageEnd")
+                        .HasColumnType("integer")
+                        .HasColumnName("page_end");
+
                     b.Property<int?>("StartLine")
                         .HasColumnType("integer")
                         .HasColumnName("start_line");
+
+                    b.Property<string>("Summary")
+                        .HasColumnType("text")
+                        .HasColumnName("summary");
+
+                    b.Property<string>("Symbol")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("symbol");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("title");
 
                     b.Property<NpgsqlTsVector>("Tsv")
                         .IsRequired()
@@ -78,7 +101,7 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("tsvector")
                         .HasColumnName("tsv")
                         .HasAnnotation("Npgsql:TsVectorConfig", "english")
-                        .HasAnnotation("Npgsql:TsVectorProperties", new[] { "HeadingPath", "Content" });
+                        .HasAnnotation("Npgsql:TsVectorProperties", new[] { "Title", "Symbol", "HeadingPath", "Summary", "Content" });
 
                     b.HasKey("Id")
                         .HasName("pk_chunks");
@@ -88,6 +111,9 @@ namespace Ragamuffin.Data.Migrations
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Embedding"), "hnsw");
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Embedding"), new[] { "vector_cosine_ops" });
+
+                    b.HasIndex("Symbol")
+                        .HasDatabaseName("ix_chunks_symbol");
 
                     b.HasIndex("Tsv")
                         .HasDatabaseName("ix_chunks_tsv");
@@ -150,6 +176,14 @@ namespace Ragamuffin.Data.Migrations
                     b.Property<int>("ChunkCount")
                         .HasColumnType("integer")
                         .HasColumnName("chunk_count");
+
+                    b.Property<string>("ChunkSource")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("auto")
+                        .HasColumnName("chunk_source");
 
                     b.Property<string>("Collection")
                         .IsRequired()
@@ -233,6 +267,10 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("size_bytes");
 
+                    b.Property<Guid?>("SourceDocumentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_document_id");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("text")
@@ -253,6 +291,9 @@ namespace Ragamuffin.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_documents");
 
+                    b.HasIndex("SourceDocumentId")
+                        .HasDatabaseName("ix_documents_source_document_id");
+
                     b.HasIndex("Collection", "Name")
                         .IsUnique()
                         .HasDatabaseName("ix_documents_collection_name");
@@ -268,6 +309,18 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnName("id");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset?>("ClaudeAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claude_at");
+
+                    b.Property<string>("ClaudeNote")
+                        .HasColumnType("text")
+                        .HasColumnName("claude_note");
+
+                    b.Property<string>("ClaudeText")
+                        .HasColumnType("text")
+                        .HasColumnName("claude_text");
 
                     b.Property<Guid>("DocumentId")
                         .HasColumnType("uuid")
@@ -313,6 +366,10 @@ namespace Ragamuffin.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("source");
+
+                    b.Property<string>("SourceBeforeClaude")
+                        .HasColumnType("text")
+                        .HasColumnName("source_before_claude");
 
                     b.Property<string>("SuspectReason")
                         .HasColumnType("text")
@@ -371,6 +428,12 @@ namespace Ragamuffin.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_documents_collections_collection");
+
+                    b.HasOne("Ragamuffin.Data.Document", null)
+                        .WithMany()
+                        .HasForeignKey("SourceDocumentId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_documents_documents_source_document_id");
                 });
 
             modelBuilder.Entity("Ragamuffin.Data.DocumentPage", b =>

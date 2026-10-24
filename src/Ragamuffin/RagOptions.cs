@@ -5,12 +5,22 @@ public sealed class RagOptions
     public const string Section = "Rag";
 
     public string OllamaUrl { get; set; } = "http://10.10.10.2:11434";
-    public string EmbeddingModel { get; set; } = "nomic-embed-text";
+    public string EmbeddingModel { get; set; } = "qwen3-embedding:0.6b";
     public int EmbeddingBatchSize { get; set; } = 32;
 
-    /// <summary>Prefixes required by nomic-embed-text; set both to "" for models that don't use them.</summary>
-    public string DocumentPrefix { get; set; } = "search_document: ";
-    public string QueryPrefix { get; set; } = "search_query: ";
+    /// <summary>
+    /// Longest text sent to the embedding model per chunk. qwen3-embedding reads 32,768 tokens, so this covers the
+    /// largest chunk Claude may define; the header, title and summary come first either way. With a model that reads
+    /// less (nomic-embed-text stops at 2,048 tokens), anything past its limit is silently ignored.
+    /// </summary>
+    public int EmbeddingMaxChars { get; set; } = 60000;
+
+    /// <summary>
+    /// Text put before documents and queries when embedding. qwen3-embedding wants a task instruction on queries only;
+    /// nomic-embed-text used "search_document: " and "search_query: ".
+    /// </summary>
+    public string DocumentPrefix { get; set; } = "";
+    public string QueryPrefix { get; set; } = "Instruct: Given a question about the user's documents, retrieve the passages that answer it\nQuery: ";
 
     public int ChunkTargetChars { get; set; } = 1200;
     public int ChunkMaxChars { get; set; } = 1800;
@@ -43,25 +53,37 @@ public sealed class McpOptions
     /// Token budget for each block of text an agent receives about the library: the server instructions added to its
     /// system prompt, and the list_collections tool's answer. Estimated at about 3.5 characters per token.
     /// </summary>
-    public int ContextTokens { get; set; } = 512;
-
-    /// <summary>Results search_documents returns when the agent doesn't ask for a number (max 10).</summary>
-    public int DefaultResults { get; set; } = 5;
-
-    /// <summary>Token budget for one search_documents answer; passages are excerpted around the query terms to fit.</summary>
-    public int SearchTokens { get; set; } = 1500;
-
-    /// <summary>Token budget for one get_document answer (an outline, or the requested pages, lines or section).</summary>
-    public int DocumentTokens { get; set; } = 2000;
-
-    /// <summary>Token budget for one list_documents answer.</summary>
-    public int ListTokens { get; set; } = 800;
+    public int ContextTokens { get; set; } = 2000;
 
     /// <summary>
-    /// Ollama model that writes ask_library's answers from retrieved passages. Set to "" to make ask_library return
-    /// plain search results instead.
+    /// Folders import_file and add_document may read files from (they run on this machine, so Claude can hand over a
+    /// path instead of the whole text). Empty means the home folder of the account the service runs as.
     /// </summary>
-    public string AnswerModel { get; set; } = "qwen3:8b";
+    public List<string> ImportRoots { get; set; } = [];
+
+    /// <summary>
+    /// Largest chunk Claude may define with add_document or set_chunks. Big enough for a long section or a whole
+    /// function; past it the chunk has to be split.
+    /// </summary>
+    public int MaxChunkChars { get; set; } = 60000;
+
+    /// <summary>Results search_documents returns when the agent doesn't ask for a number (max 25).</summary>
+    public int DefaultResults { get; set; } = 8;
+
+    /// <summary>Token budget for one search_documents answer; passages are excerpted around the query terms to fit.</summary>
+    public int SearchTokens { get; set; } = 12000;
+
+    /// <summary>Token budget for one get_document answer (an outline, or the requested pages, lines or section).</summary>
+    public int DocumentTokens { get; set; } = 25000;
+
+    /// <summary>Token budget for one list_documents answer.</summary>
+    public int ListTokens { get; set; } = 6000;
+
+    /// <summary>
+    /// Ollama model that writes ask_library's answers from retrieved passages. Empty (the default) leaves ask_library
+    /// out: Claude reads the passages itself. Set it (e.g. "qwen3:8b") for agents that benefit from a pre-written answer.
+    /// </summary>
+    public string AnswerModel { get; set; } = "";
 
     /// <summary>Token budget for the passages given to the answer model.</summary>
     public int AnswerContextTokens { get; set; } = 3000;

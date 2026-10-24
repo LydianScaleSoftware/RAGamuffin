@@ -1,14 +1,14 @@
-# RAGamuffin - A RAG server for opencode
+# RAGamuffin - A document library for Claude Code
 
-A small local retrieval service for opencode. You add documents in a web UI. They are chunked, embedded with `nomic-embed-text` on the Ollama box (`tb`, 10.10.10.2), and stored in Postgres with pgvector. opencode queries them through MCP over HTTP.
+A local document library that Claude Code searches and builds through MCP. You add documents in the web UI, or Claude adds them: it checks PDF text against the page images, converts manuals to Markdown, and chooses its own chunks (a section, a table, a listing, a whole function). Chunks are embedded with `qwen3-embedding` on the Ollama box (`tb`, 10.10.10.2) and stored in Postgres with pgvector; search combines meaning and exact words.
 
 ```
-web UI ──upload──▶ RAGamuffin ──/api/embed──▶ Ollama (tb) nomic-embed-text
+web UI ──upload──▶ RAGamuffin ──/api/embed──▶ Ollama (tb) qwen3-embedding
                      │  ▲
                      ▼  │ hybrid search (vector + full-text, RRF)
               Postgres 18 + pgvector (Docker)
                         ▲
-opencode ──MCP /mcp─────┘
+Claude Code ──MCP /mcp──┘  (search, read, check pages, add Markdown with its own chunks)
 ```
 
 | What | Where |
@@ -31,30 +31,32 @@ opencode ──MCP /mcp─────┘
 | Ollama | Recent (tested on 0.40.5) | Embeddings, OCR and Suggest. It can run on this machine or another one on the network; see [Ollama server](#ollama-server) below. |
 | macOS | Tested on macOS 15 (Intel) | The launchd scripts are macOS-only. The server itself also runs on Linux and Windows; PDF rendering has native builds for all three. |
 
-MCP clients are optional: opencode, Claude Code, or anything that speaks MCP over HTTP.
+MCP clients are optional: Claude Code, or anything that speaks MCP over HTTP.
 
 ### Ollama models
 
 | Model | Needed for | Size on disk | Required? | Setting |
 |---|---|---|---|---|
-| `nomic-embed-text` | Embedding every chunk and every search query | 0.3 GB | **Yes** | `Rag:EmbeddingModel` |
+| `qwen3-embedding:0.6b` | Embedding every chunk and every search query | 0.6 GB (2.9 GB loaded, with its 32K-token context) | **Yes** | `Rag:EmbeddingModel` |
 | `glm-ocr` | OCR of scanned PDF pages | 2.7 GB | Only for OCR | `Rag:Ocr:Model` |
-| `qwen3:8b`, or any small instruction-following chat model | **Suggest** on the Collections page, and the `ask_library` MCP tool | 5.2 GB | Recommended | `Rag:Collections:SuggestModel`, `Rag:Mcp:AnswerModel` |
+| `qwen3:8b`, or any small instruction-following chat model | **Suggest** on the Collections page (and the optional `ask_library` tool) | 5.2 GB | Optional | `Rag:Collections:SuggestModel`, `Rag:Mcp:AnswerModel` |
 
 ```bash
-ollama pull nomic-embed-text
-ollama pull glm-ocr
-ollama pull qwen3:8b      # recommended, for Suggest and ask_library
+ollama pull qwen3-embedding:0.6b
+ollama pull glm-ocr         # optional: batch OCR on the server; Claude can also check pages itself
+ollama pull qwen3:8b        # optional, for Suggest
 ```
 
-Suggest only writes a sentence or two and a keyword list, and `ask_library` writes a short answer from a few retrieved passages, so a small model is plenty. A fast 8B model answering in one call costs the agent far less time and context than letting a big coding model search and read for itself.
+**Why qwen3-embedding.** On 30 questions about the IIgs manuals, written in different words from the text, hybrid search put the right passage in the top five 23 times with `qwen3-embedding:0.6b`, against 19 with `nomic-embed-text` and 12 with keyword search alone. It also reads 32,768 tokens per chunk where nomic-embed-text silently stops at 2,048, so a long section or whole function Claude keeps as one chunk is embedded whole. It's slower to embed (about 13 chunks a second on `tb`, against 30), which matters only when re-indexing everything.
 
-Without `glm-ocr`, scanned PDFs stay at **needs OCR** and **Run OCR** is disabled with an explanation. Without the Suggest model, **Suggest** reports an error, and descriptions can still be typed by hand. Without the answer model, `ask_library` returns plain search results instead of an answer.
+Suggest only writes a sentence or two and a keyword list, so a small model is plenty.
+
+Without `glm-ocr`, scanned PDFs stay at **needs OCR** and **Run OCR** is disabled with an explanation. Without the Suggest model, **Suggest** reports an error, and descriptions can still be typed by hand.
 
 ### Ollama server
 
 - **Reachable over the network** when it runs on another machine. On that machine, set `OLLAMA_HOST=0.0.0.0` so Ollama listens beyond localhost. Point `Rag:OllamaUrl` at it (here `http://10.10.10.2:11434`).
-- **Room for two or three models at once.** During OCR batches the indexing lane embeds with `nomic-embed-text` while the analysis lane OCRs with `glm-ocr`. If a coding model is also loaded for opencode, that's three. Set `OLLAMA_MAX_LOADED_MODELS` to at least 2, or 3 to keep the coding model loaded, and make sure memory allows it. On `tb` (32 GB), for example: a 35B coding model for opencode ≈ 22 GB, `glm-ocr` ≈ 3–4 GB with its 16K context, `nomic-embed-text` ≈ 0.3 GB, and `qwen3:8b` ≈ 5–6 GB while Suggest or `ask_library` runs. While an agent is working, `ask_library` needs its own model loaded next to the agent's and `nomic-embed-text`, so set `OLLAMA_MAX_LOADED_MODELS=3`; with 2, each `ask_library` call evicts the agent's model and both reload in turn, which is slow.
+- **Room for two models at once.** During OCR batches the indexing lane embeds with `qwen3-embedding` while the analysis lane OCRs with `glm-ocr`, so set `OLLAMA_MAX_LOADED_MODELS` to at least 2 (more if you also run other models there). Memory: `qwen3-embedding:0.6b` ≈ 2.9 GB loaded, `glm-ocr` ≈ 3–4 GB with its 16K context, `qwen3:8b` ≈ 5–6 GB while Suggest runs. Every search embeds the query, so if the embedding model has been unloaded, the first search after a while waits a few seconds for it to load.
 - **No server-side tuning is required.** RAGamuffin sends its own per-request options (context size, output cap, temperature, `keep_alive`); OCR asks Ollama to unload `glm-ocr` 5 minutes after the last page.
 
 ### Disk space
@@ -77,37 +79,51 @@ dotnet run --project src/Ragamuffin   # applies migrations on startup
 
 To run it permanently as a launchd agent that starts at login, use `scripts/install-service.sh`. It publishes to `publish/` and logs to `data/logs/ragamuffin.log`. Re-run the script after code changes. `scripts/uninstall-service.sh` removes the agent. Docker Desktop must be set to start at login for the database to come back after a reboot.
 
-## Connecting agents (opencode, Claude Code)
-
-**opencode** (V2 configuration): add this to `~/.config/opencode/opencode.json`:
-
-```json
-"mcp": {
-  "servers": {
-    "rag": { "type": "remote", "url": "http://localhost:5077/mcp", "oauth": false, "codemode": false }
-  }
-}
-```
-
-`"codemode": false` makes models call RAGamuffin's tools directly. By default opencode wraps MCP tools in *Code Mode*, where the model writes a small JavaScript snippet to call each tool. Local models often get that wrong (for example, forgetting to `await` the result), and with only four tools Code Mode offers no benefit here.
-
-**Claude Code:**
+## Connecting Claude Code
 
 ```bash
 claude mcp add --transport http --scope user rag http://localhost:5077/mcp
+scripts/install-skills.sh      # links the rag-check-pdf and rag-convert-pdf skills into ~/.claude/skills
 ```
 
-Tools exposed (all read-only). Every answer is kept to a small token budget so it fits a local model's context, and ends with the exact call to read more:
+Any other client that speaks MCP over HTTP works too; answers are sized for Claude's large context.
 
-- `ask_library(question, collection?)`: one-step answer. Retrieves the best passages and has a small local model (`Rag:Mcp:AnswerModel`, default `qwen3:8b`) write a short answer that quotes code exactly and cites its sources, each with a ready-made `get_document` call. Falls back to search results if the model isn't available.
-- `search_documents(query, top_k=5, collection?)`: cited excerpts (up to 10). Neighbouring chunks of one document are merged, near-duplicates from other editions are dropped and noted as "also in", and each excerpt is trimmed around the query's words.
-- `get_document(name_or_id, pages?, lines?, section?, collection?)`: reads part of a document. With no range it returns the outline (headings with line or page numbers); `pages="12-14"`, `lines="120-200"` or `section="Drawing Text"` read just that part, ending with how to continue. Partial names work.
-- `list_documents(filter?, collection?)`: names, types and sizes; `filter` matches part of a name.
+### Reading tools
+
+- `search_documents(query, top_k=8, collection?)`: up to 25 cited passages, found by meaning and by exact words. Each shows its document, location, section, title and chunk id. Neighbouring server-made chunks are joined; near-duplicates from other editions are dropped and noted as "also in".
+- `get_chunk(ids, neighbors=0)`: chunks whole, by id, optionally with the chunks around them.
+- `get_document(name_or_id, pages?, lines?, section?, collection?)`: with no range, the outline (headings with line or page numbers); `pages="12-14"`, `lines="120-200"` or `section="Drawing Text"` read just that part, ending with where to continue. Partial names work.
+- `list_documents(filter?, collection?)`: names, types, sizes, chunk counts and conversions.
 - `list_collections(collection?)`: what each collection covers (description, keywords), its size and example titles.
+- `list_pages(document, which?, pages?)` and `get_page(document, page)`: a PDF's pages that need review, and one page as an image beside every text version the server has (embedded, glm-ocr, layout, Claude's).
 
-**Agents on/off.** The switch in the page header turns agent access off without disconnecting anything: while it's off, every tool call returns a one-line note saying the library is switched off (nothing is searched), and newly connecting clients are told not to use it. The setting is stored in the database, so it survives restarts and redeploys.
+### Tools that change the library
 
-When a client connects, the server also sends **instructions** that clients add to the model's system prompt: when to use the tools, plus each collection's name, size, description and keywords. They're generated live from the Collections page, so the agent knows what the library holds without notes in `AGENTS.md` or `CLAUDE.md`. Both the instructions and the `list_collections` answer are kept within 512 tokens (`Rag:Mcp:ContextTokens`). Detail is trimmed first (keywords, then description length), and only then are the smallest collections summarized as "…and N more". Clients read instructions when they connect, so edits show up in the next session.
+- `import_file(path, collection?, name?)`: adds a file from this computer as is, like an upload.
+- `set_page_text(document, pages, reindex=true)`: saves Claude's text for PDF pages (from the page images), or confirms the text in use is right. Claude's text becomes the page's source; the other versions are kept, so it can be removed again.
+- `add_document(name, chunks, path | content, collection?, source_document?)`: adds a text document, usually Markdown Claude wrote from a PDF, with **chunks Claude chose**: line ranges with a title, section, summary, kind, symbol and source pages. A chunk is one unit of any size (a section, a table, a listing with its explanation, a reference entry, a whole function) up to 60,000 characters. With `source_document`, the PDF pages the conversion covers drop out of search, so results aren't duplicated.
+- `set_chunks(document, chunks)`: re-chunks a text document without re-sending it.
+- `delete_document(document)`: needs the exact name.
+
+`import_file` and `add_document` read files only from the folders in `Rag:Mcp:ImportRoots` (default: your home folder).
+
+### Skills
+
+The two skills in `skills/` tell Claude how to do the work well, so you can just ask ("check the OCR of the Toolbox Reference Volume 3", "convert chapter 16 of Volume 2 to Markdown"):
+
+- **`rag-check-pdf`**: finds the pages that need review, compares each page image with its text, confirms or corrects it, and re-indexes once at the end.
+- **`rag-convert-pdf`**: converts a manual chapter by chapter into Markdown with page markers, chooses chunks by meaning, and adds them with `add_document` linked to the PDF.
+
+Page images cost roughly 1,500 tokens each, so a few hundred pages is a long session; the skills say so before starting.
+
+### Switches
+
+The page header has two switches, stored in the database:
+
+- **Agents read**: off turns every tool call into a one-line note saying the library is switched off, and newly connecting clients are told not to use it.
+- **Agents write**: off blocks only the tools that change the library; searching and reading still work.
+
+When a client connects, the server also sends **instructions** that are added to the model's system prompt: what the library is for, how to search and add to it, plus each collection's name, size, description and keywords, generated live from the Collections page. They're kept within 2,000 tokens (`Rag:Mcp:ContextTokens`); clients read them when they connect, so edits show up in the next session.
 
 ## Managing documents
 
@@ -117,13 +133,13 @@ When a client connects, the server also sends **instructions** that clients add 
 - **New collection…** opens the collections page ready to create one. After creating it, you return with the new collection selected.
 - Uploading the same name into the same collection replaces the document. Identical content is skipped.
 - Each document can be deleted, re-indexed or inspected. Inspecting shows its chunks, the extracted text and the original file.
-- **Test search** shows exactly what opencode will get back.
+- **Test search** shows the passages a search returns.
 
 **Collections page** (http://localhost:5077/collections.html):
 
 - Create several collections at once, one name per line.
 - Rename by editing names in the table, then **Save changes**. All edits apply together or not at all, so swapping two names works. A rename carries over to every document in that collection.
-- Give each collection a **description** and **keywords**: these are what AI agents are told about the library (see [Connecting agents](#connecting-agents-opencode-claude-code)). **Suggest** drafts both with a local model (`Rag:Collections:SuggestModel`, default `qwen3:8b`) from the collection's titles and section headings; nothing is saved until **Save changes**.
+- Give each collection a **description** and **keywords**: these are what AI agents are told about the library (see [Connecting Claude Code](#connecting-claude-code)). **Suggest** drafts both with a local model (`Rag:Collections:SuggestModel`, default `qwen3:8b`) from the collection's titles and section headings; nothing is saved until **Save changes**.
 - Tick collections and **Remove selected…** to remove them. You choose whether their documents move to `(default)` or are deleted. A move is refused when `(default)` already has a document with the same name.
 - `(default)` is the built-in, unnamed collection. It can't be renamed or removed. In the API and MCP tools it is called `default`.
 
@@ -179,13 +195,14 @@ Either way, running headers, footers and page numbers are dropped (only when the
   - Markdown splits on sections and paragraphs and keeps a heading breadcrumb. Fenced code blocks stay intact.
   - Code splits on blank-line groups and records line ranges.
   - PDFs are chunked per page.
+  - Documents Claude adds with `add_document` keep Claude's own chunks instead, and re-indexing keeps them.
   - Tiny sections merge with their neighbours instead of becoming useless one-line chunks.
-- **Embedding** (`Embeddings/OllamaEmbedder.cs`): calls `POST /api/embed` in batches of 32. It uses the `search_document:` and `search_query:` prefixes that nomic-embed-text expects. A short header (file name, language, section or page) is embedded with each chunk.
+- **Embedding** (`Embeddings/OllamaEmbedder.cs`): calls `POST /api/embed` in batches of 32. Queries get the task instruction qwen3-embedding expects. Each chunk is embedded with a header first (file name, language, section, page, and for Claude's chunks the title, symbol and summary), then its text.
 - **Search** (`Search/SearchService.cs`): runs pgvector cosine search (HNSW index) and Postgres full-text search (`websearch_to_tsquery`) and merges them with reciprocal rank fusion. Exact identifiers such as `CB-12` or class names are found even when embeddings miss them.
 - **Ingestion** runs in two independent lanes, each handling one job at a time: indexing (uploads and re-indexes) and OCR. Uploads finish within seconds even during a long OCR run. Uploading a new version of a document while it's being OCR'd cancels that run and indexes the new file. Search keeps working throughout, and a document being OCR'd stays searchable with its previous text.
 - **Extracted text** is cleaned before storage: NUL characters, stray control characters and broken surrogates are removed, because Postgres rejects them.
 
-Settings are in `src/Ragamuffin/appsettings.json` under `Rag`; every one is listed in [Configuration.md](Configuration.md). Switching to an embedding model with a different dimension needs a new migration, because the column is `vector(768)`.
+Settings are in `src/Ragamuffin/appsettings.json` under `Rag`; every one is listed in [Configuration.md](Configuration.md). Switching to an embedding model with a different dimension needs a new migration, because the column is `vector(1024)`.
 
 ## Development
 
@@ -204,4 +221,4 @@ dotnet ef migrations add <Name> -p src/Ragamuffin -o Data/Migrations
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
 
-Third-party components keep their own licenses. That includes the NuGet packages, PaddleOCR and its models in the layout service, and the Ollama models it uses (`nomic-embed-text`, `glm-ocr`), which are downloaded separately and not part of this repository.
+Third-party components keep their own licenses. That includes the NuGet packages, PaddleOCR and its models in the layout service, and the Ollama models it uses (`qwen3-embedding`, `glm-ocr`, `qwen3`), which are downloaded separately and not part of this repository.

@@ -94,10 +94,16 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, 
     {
         var docs = collections.Sum(c => c.Documents);
         var header =
-            $"RAGamuffin holds the user's own document library ({docs:N0} documents in {collections.Count} collection{(collections.Count == 1 ? "" : "s")}). " +
-            "For questions these documents may answer: call ask_library first (one call, cited answer); " +
-            "use search_documents for specific passages, then get_document with pages=/lines=/section= to read around a result. " +
-            "Never read whole documents. Cite document and page or lines. Pass `collection` when one clearly fits; list_collections describes each.";
+            $"RAGamuffin holds the user's own document library ({docs:N0} documents in {collections.Count} collection{(collections.Count == 1 ? "" : "s")}): " +
+            "manuals and references that are often not in your training data. Prefer it over memory for their details " +
+            "(exact call names, parameters, constants, listings).\n" +
+            "Reading: search_documents (by meaning and exact words; rephrase in the manual's own terms if it misses), get_chunk for a " +
+            "result in full, get_document with pages=/lines=/section= to read around it. Cite document and page or lines.\n" +
+            "Adding (when the user asks): import_file adds a file as is; for a PDF, list_pages finds pages to check, get_page shows the " +
+            "page image with its current text, set_page_text saves your corrected text. To convert a manual, write it as Markdown, then " +
+            "add_document with your own chunks (line ranges, each one coherent unit — a section, table, listing with its explanation, " +
+            "or whole function — with a title and a search-friendly summary) and source_document= the PDF.\n" +
+            "Pass `collection` when one clearly fits; list_collections describes each.";
         if (collections.Count == 0)
             return "RAGamuffin searches the user's own document library, which is empty right now.";
         return Fit(header, "Collections:", collections, budgetTokens, InstructionLevels, FormatInstructionLine);

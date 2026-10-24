@@ -7,6 +7,9 @@ public static class PageSource
 
     /// <summary>The PDF's own words, arranged by layout analysis (reading order, no headers/footers, rebuilt tables).</summary>
     public const string Layout = "layout";
+
+    /// <summary>Text Claude read from the page image and saved through the MCP set_page_text tool.</summary>
+    public const string Claude = "claude";
 }
 
 /// <summary>
@@ -40,10 +43,21 @@ public sealed class DocumentPage
     public int? LayoutAngle { get; set; }
     public DateTimeOffset? LayoutAt { get; set; }
 
+    /// <summary>Text Claude verified or transcribed from the page image (Markdown), or null.</summary>
+    public string? ClaudeText { get; set; }
+
+    /// <summary>Claude's note on what it changed or found (e.g. "fixed OCR of table; figure caption added").</summary>
+    public string? ClaudeNote { get; set; }
+    public DateTimeOffset? ClaudeAt { get; set; }
+
+    /// <summary>The source in use before Claude's text replaced it, so removing Claude's text restores it.</summary>
+    public string? SourceBeforeClaude { get; set; }
+
     public string? EffectiveText => Source switch
     {
         PageSource.Ocr => OcrText,
         PageSource.Layout => LayoutText,
+        PageSource.Claude => ClaudeText,
         _ => EmbeddedText,
     };
 

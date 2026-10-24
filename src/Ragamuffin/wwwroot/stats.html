@@ -14,10 +14,15 @@
       <a href="/collections.html">Collections</a>
       <a href="/stats.html" class="active">Stats</a>
     </nav>
-    <label class="agents-switch" title="When off, opencode and other agents get a note instead of search results.">
+    <label class="agents-switch" title="When off, Claude and other agents get a note instead of search results.">
       <input type="checkbox" id="agents-enabled" role="switch" disabled>
       <span class="track"><span class="thumb"></span></span>
-      <span id="agents-label">Agents</span>
+      <span id="agents-label">Agents read</span>
+    </label>
+    <label class="agents-switch" title="When off, agents can search and read but can't add documents, save page text, re-chunk or delete.">
+      <input type="checkbox" id="agents-writes" role="switch" disabled>
+      <span class="track"><span class="thumb"></span></span>
+      <span id="agents-writes-label">Agents write</span>
     </label>
     <span id="health" class="pill">checking…</span>
   </header>

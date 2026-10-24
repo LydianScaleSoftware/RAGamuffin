@@ -83,8 +83,8 @@ Point the server at a URL and ingest that page, or a whole documentation site, i
 
 - **Reranking:** a cross-encoder reranker after hybrid retrieval would improve the ordering of the top results.
 - **Minimum relevance:** search always returns `top_k` results, even weak ones. A similarity floor would let tools say "nothing relevant".
-- **Chunk sizes:** 1,200 / 1,800 / 150 characters were chosen to fit nomic-embed-text's 2,048-token context with room to spare. Revisit if answers often lack surrounding context.
-- **Embedding model:** the vector column is fixed at 768 dimensions. Changing model means a migration and re-embedding everything.
+- **Chunk sizes:** the server's own 1,200 / 1,800 / 150 characters date from nomic-embed-text's 2,048-token context. qwen3-embedding reads 32,768 tokens, so larger automatic chunks are now possible; documents Claude converts already use its own sizes.
+- **Embedding model:** `qwen3-embedding:0.6b` (1,024 dimensions). The 4b model may search better but has 2,560 dimensions, past pgvector's 2,000-dimension HNSW limit, so it would need `halfvec`; worth measuring with the same 30-question test first.
 - **Parallel OCR pages:** pages are OCR'd one at a time. With `OLLAMA_NUM_PARALLEL` above 1 on `tb`, two or three pages at once could shorten long runs, at the cost of more GPU memory.
 
 ## Collections

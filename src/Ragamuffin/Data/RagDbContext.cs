@@ -4,7 +4,7 @@ namespace Ragamuffin.Data;
 
 public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbContext(options)
 {
-    public const int EmbeddingDimensions = 768;
+    public const int EmbeddingDimensions = 1024;
 
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<Chunk> Chunks => Set<Chunk>();
@@ -43,6 +43,9 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasMany(d => d.Pages).WithOne().HasForeignKey(p => p.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade);
+            e.Property(d => d.ChunkSource).HasMaxLength(20).HasDefaultValue(ChunkSources.Auto);
+            // Deleting the PDF leaves its Markdown conversion in place, unlinked.
+            e.HasOne<Document>().WithMany().HasForeignKey(d => d.SourceDocumentId).OnDelete(DeleteBehavior.SetNull);
         });
 
         model.Entity<DocumentPage>(e =>
@@ -58,10 +61,14 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
         {
             e.ToTable("chunks");
             e.Property(c => c.Embedding).HasColumnType($"vector({EmbeddingDimensions})");
-            e.HasGeneratedTsVectorColumn(c => c.Tsv, "english", c => new { c.HeadingPath, c.Content })
+            e.Property(c => c.Kind).HasMaxLength(40);
+            e.Property(c => c.Symbol).HasMaxLength(300);
+            e.Property(c => c.Title).HasMaxLength(300);
+            e.HasGeneratedTsVectorColumn(c => c.Tsv, "english", c => new { c.Title, c.Symbol, c.HeadingPath, c.Summary, c.Content })
                 .HasIndex(c => c.Tsv).HasMethod("gin");
             e.HasIndex(c => c.Embedding).HasMethod("hnsw").HasOperators("vector_cosine_ops");
             e.HasIndex(c => new { c.DocumentId, c.Ordinal });
+            e.HasIndex(c => c.Symbol);
         });
     }
 }

@@ -1,7 +1,10 @@
 "use strict";
 
 const size = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
-const location_ = (h) => h.startLine != null ? `lines ${h.startLine}–${h.endLine}` : h.page != null ? `page ${h.page}` : "";
+const pages_ = (c) => c.page == null ? "" : c.pageEnd != null && c.pageEnd !== c.page ? `pages ${c.page}–${c.pageEnd}` : `page ${c.page}`;
+const location_ = (h) => h.startLine != null
+  ? `lines ${h.startLine}–${h.endLine}${h.page != null ? ` · from ${pages_(h)}` : ""}`
+  : pages_(h);
 
 let docs = [];
 let pollTimer = null;
@@ -106,6 +109,16 @@ function statusCell(d) {
         const tip = `Layout analyzed: ${d.layoutPages} of ${textPages(d)} pages with text (reading order, tables, headers and footers removed)`;
         badge += ` <span class="badge layout" title="${esc(tip)}">Layout${all ? "" : ` ${d.layoutPages}/${textPages(d)}`}</span>`;
       }
+      if (d.claudePages > 0) {
+        const all = d.claudePages === d.pageCount;
+        badge += ` <span class="badge claude" title="Text checked or transcribed by Claude from the page images: ${d.claudePages} of ${d.pageCount} pages">Claude${all ? "" : ` ${d.claudePages}/${d.pageCount}`}</span>`;
+      }
+      if (d.chunkSource === "claude")
+        badge += ` <span class="badge claude" title="Claude chose the chunk boundaries (sections, tables, listings or whole functions kept together)">Claude chunks</span>`;
+      if (d.sourceName)
+        badge += ` <span class="badge muted-badge" title="Converted from ${esc(d.sourceName)}">from ${esc(d.sourceName.split("/").pop())}</span>`;
+      if (d.convertedTo)
+        badge += ` <span class="badge muted-badge" title="Searched through its conversion ${esc(d.convertedTo)}; this document's own chunks are left out of search">→ ${esc(d.convertedTo.split("/").pop())}</span>`;
       const empty = d.contentType === "pdf" && d.emptyPages > 0
         ? ` <span class="badge muted-badge" title="${d.emptyPages} page${d.emptyPages > 1 ? "s have" : " has"} no text; use Re-index… to OCR them">${d.emptyPages} blank</span>`
         : "";
@@ -592,8 +605,9 @@ function showTab(tab) {
     ? `<pre>${esc(viewerDoc.text)}</pre>`
     : viewerChunks.map((c) => `
       <div class="hit">
-        <div class="hit-head"><strong>#${c.ordinal + 1} <span class="muted">${location_(c)}</span>${c.ocr ? ` <span class="badge ocr">OCR</span>` : ""}</strong><span class="muted">${c.content.length} chars</span></div>
+        <div class="hit-head"><strong>#${c.ordinal + 1}${c.title ? ` ${esc(c.title)}` : ""} <span class="muted">${location_(c)}</span>${c.ocr ? ` <span class="badge ocr">OCR</span>` : ""}${c.kind ? ` <span class="badge muted-badge">${esc(c.kind)}${c.symbol ? ` ${esc(c.symbol)}` : ""}</span>` : ""}</strong><span class="muted">${c.content.length.toLocaleString()} chars</span></div>
         ${c.headingPath ? `<div class="muted">${esc(c.headingPath)}</div>` : ""}
+        ${c.summary ? `<div class="chunk-summary">${esc(c.summary)}</div>` : ""}
         <pre>${esc(c.content)}</pre>
       </div>`).join("");
 }

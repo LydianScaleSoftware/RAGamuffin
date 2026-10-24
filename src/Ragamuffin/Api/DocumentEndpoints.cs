@@ -31,6 +31,10 @@ public static class DocumentEndpoints
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
+                    d.ChunkSource,
+                    ClaudePages = db.Pages.Count(p => p.DocumentId == d.Id && p.Source == PageSource.Claude),
+                    SourceName = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
+                    ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).Select(o => o.Name).FirstOrDefault(),
                 })
                 .ToListAsync(ct);
             // Text origin and raw-embedded page counts match the Stats page, so its drill-down links filter exactly.
@@ -43,6 +47,7 @@ public static class DocumentEndpoints
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
+                    d.ChunkSource, d.ClaudePages, d.SourceName, d.ConvertedTo,
                     Origin = StatsService.Classify(d.ContentType, mix).ToString(),
                     RawEmbeddedPages = mix?.Embedded ?? 0,
                 };
@@ -85,7 +90,7 @@ public static class DocumentEndpoints
 
         api.MapGet("/documents/{id:guid}/chunks", async (Guid id, RagDbContext db, CancellationToken ct) =>
             await db.Chunks.AsNoTracking().Where(c => c.DocumentId == id).OrderBy(c => c.Ordinal)
-                .Select(c => new { c.Id, c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.Ocr, c.Content })
+                .Select(c => new { c.Id, c.Ordinal, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.PageEnd, c.Ocr, c.Title, c.Summary, c.Kind, c.Symbol, c.Content })
                 .ToListAsync(ct));
 
         api.MapGet("/documents/{id:guid}/file", async (Guid id, RagDbContext db, FileStore files, CancellationToken ct) =>
@@ -118,6 +123,18 @@ public static class DocumentEndpoints
                     : Results.NotFound();
             await queue.EnqueueAsync(id, ct);
             return Results.Accepted();
+        });
+
+        // Rebuilds every document's chunks from its current text (PDF pages keep their OCR, layout and Claude text;
+        // Claude-chosen chunks keep their boundaries). Used after changing the embedding model or chunking rules.
+        api.MapPost("/reindex-all", async (RagDbContext db, IngestQueue queue, CancellationToken ct) =>
+        {
+            var ids = await db.Documents.Where(d => d.Status != DocumentStatus.Ocr && d.Status != DocumentStatus.Pending)
+                .Select(d => d.Id).ToListAsync(ct);
+            await db.Documents.Where(d => ids.Contains(d.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, DocumentStatus.Pending).SetProperty(d => d.Error, (string?)null), ct);
+            foreach (var id in ids) await queue.EnqueueAsync(id, ct);
+            return Results.Ok(new { queued = ids.Count });
         });
 
         api.MapGet("/stats", (StatsService stats, CancellationToken ct) => stats.BuildAsync(ct));
@@ -166,11 +183,11 @@ public static class DocumentEndpoints
                 : Results.Ok(await search.SearchAsync(q, k ?? 8, collection, ct)));
 
         // The on/off switch for agents (MCP). Off makes every tool call a no-op that says so.
-        api.MapGet("/settings/agents", (McpSwitch sw) => new { enabled = sw.Enabled, changedAt = sw.ChangedAt });
+        api.MapGet("/settings/agents", (McpSwitch sw) => new { enabled = sw.Enabled, writes = sw.WritesEnabled, changedAt = sw.ChangedAt });
         api.MapPut("/settings/agents", async (McpSwitch sw, AgentsSetting body, CancellationToken ct) =>
         {
-            await sw.SetAsync(body.Enabled, ct);
-            return new { enabled = sw.Enabled, changedAt = sw.ChangedAt };
+            await sw.SetAsync(body.Enabled, body.Writes, ct);
+            return new { enabled = sw.Enabled, writes = sw.WritesEnabled, changedAt = sw.ChangedAt };
         });
 
         api.MapGet("/health", async (RagDbContext db, OllamaEmbedder embedder, IOptions<RagOptions> options, CancellationToken ct) =>
@@ -215,4 +232,4 @@ public sealed record UpdateCollectionDetailsRequest(List<CollectionDetails>? Ite
 
 public sealed record SuggestCollectionRequest(string Name);
 
-public sealed record AgentsSetting(bool Enabled);
+public sealed record AgentsSetting(bool? Enabled, bool? Writes);

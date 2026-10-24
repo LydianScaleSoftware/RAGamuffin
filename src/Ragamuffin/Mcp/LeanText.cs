@@ -17,15 +17,30 @@ public sealed record Passage(
     string Text,
     List<string> AlsoIn)
 {
-    /// <summary>"lines 10-40", "page 12", "pages 12-13", or "" when the location is unknown.</summary>
-    public string Location => Page is { } p
-        ? (PageEnd is { } e && e != p ? $"pages {p}-{e}" : $"page {p}")
-        : StartLine is { } s ? $"lines {s}-{EndLine ?? s}" : "";
+    /// <summary>The chunks this passage is made of, for get_chunk.</summary>
+    public IReadOnlyList<long> ChunkIds { get; init; } = [];
+    public string? Title { get; init; }
+    public string? Summary { get; init; }
+    public string? Kind { get; init; }
+    public string? Symbol { get; init; }
 
-    /// <summary>The range argument that reads this passage with get_document, e.g. pages="12-13".</summary>
-    public string ReadHint => Page is { } p
-        ? $"pages=\"{p}-{PageEnd ?? p}\""
-        : StartLine is { } s ? $"lines=\"{s}-{EndLine ?? s}\"" : "";
+    /// <summary>
+    /// "lines 10-40", "page 12", "pages 12-13", or "" when the location is unknown. Lines win when a chunk has both:
+    /// a Markdown conversion's chunk records the PDF pages it came from (see <see cref="SourcePages"/>).
+    /// </summary>
+    public string Location => StartLine is { } s
+        ? $"lines {s}-{EndLine ?? s}"
+        : Page is { } p ? (PageEnd is { } e && e != p ? $"pages {p}-{e}" : $"page {p}") : "";
+
+    /// <summary>The PDF pages a converted chunk came from, e.g. "from pp. 112-113", or "" for other chunks.</summary>
+    public string SourcePages => StartLine is not null && Page is { } p
+        ? (PageEnd is { } e && e != p ? $"from pp. {p}-{e}" : $"from p. {p}")
+        : "";
+
+    /// <summary>The range argument that reads this passage with get_document, e.g. lines="40-60" or pages="12-13".</summary>
+    public string ReadHint => StartLine is { } s
+        ? $"lines=\"{s}-{EndLine ?? s}\""
+        : Page is { } p ? $"pages=\"{p}-{PageEnd ?? p}\"" : "";
 }
 
 /// <summary>
@@ -59,11 +74,20 @@ public static partial class LeanText
 
     /// <summary>
     /// Merges hits that are consecutive chunks of the same document, removing the overlap the chunker repeats between
-    /// neighbours. Passages are ranked by their chunks' summed scores: two neighbouring chunks that both matched (an
-    /// explanation and the listing after it) are better evidence than either alone.
+    /// neighbours. A passage ranks by its best chunk's score plus the scores of neighbours that are nearly as relevant
+    /// as the best result overall (by similarity): two neighbouring chunks that both match well (an explanation and the
+    /// listing after it) are better evidence than either alone, but a run of weak matches mustn't outrank one strong,
+    /// complete chunk.
     /// </summary>
     public static List<Passage> Merge(IReadOnlyList<SearchHit> hits)
     {
+        var bestSimilarity = hits.Max(h => h.Similarity) ?? 0;
+        double RunScore(List<SearchHit> run)
+        {
+            var best = run.MaxBy(r => r.Score)!;
+            return best.Score + run.Where(r => r != best && (r.Similarity is null || r.Similarity >= bestSimilarity - SupportMargin)).Sum(r => r.Score);
+        }
+
         var used = new HashSet<long>();
         var byKey = hits.ToDictionary(h => (h.DocumentId, h.Ordinal));
         var passages = new List<(Passage P, double Score)>();
@@ -72,20 +96,31 @@ public static partial class LeanText
             if (!used.Add(hit.ChunkId)) continue;
             // At most MaxRun chunks per passage, so one long stretch doesn't crowd out other results.
             var run = new List<SearchHit> { hit };
-            for (var o = hit.Ordinal - 1; run.Count < MaxRun && byKey.TryGetValue((hit.DocumentId, o), out var prev) && used.Add(prev.ChunkId); o--) run.Insert(0, prev);
-            for (var o = hit.Ordinal + 1; run.Count < MaxRun && byKey.TryGetValue((hit.DocumentId, o), out var next) && used.Add(next.ChunkId); o++) run.Add(next);
+            // Chunks Claude chose are whole units already; only the server's fixed-size chunks are joined to neighbours.
+            if (!hit.ClaudeChunk)
+            {
+                for (var o = hit.Ordinal - 1; run.Count < MaxRun && byKey.TryGetValue((hit.DocumentId, o), out var prev) && used.Add(prev.ChunkId); o--) run.Insert(0, prev);
+                for (var o = hit.Ordinal + 1; run.Count < MaxRun && byKey.TryGetValue((hit.DocumentId, o), out var next) && used.Add(next.ChunkId); o++) run.Add(next);
+            }
 
             var text = run[0].Content;
             foreach (var next in run.Skip(1)) text = JoinOverlapping(text, next.Content);
             passages.Add((new Passage(
                 hit.DocumentName, hit.Collection, run.Select(r => r.HeadingPath).FirstOrDefault(h => h is not null),
                 run[0].StartLine, run[^1].EndLine ?? run[^1].StartLine,
-                run[0].Page, run[^1].Page, run.Any(r => r.Ocr), Dedent(text), []), run.Sum(r => r.Score)));
+                run[0].Page, run[^1].PageEnd ?? run[^1].Page, run.Any(r => r.Ocr), Dedent(text), [])
+            {
+                ChunkIds = run.Select(r => r.ChunkId).ToList(),
+                Title = hit.Title, Summary = hit.Summary, Kind = hit.Kind, Symbol = hit.Symbol,
+            }, RunScore(run)));
         }
         return passages.OrderByDescending(p => p.Score).Select(p => p.P).ToList();
     }
 
     const int MaxRun = 3;
+
+    /// <summary>How far below the best result's similarity a neighbour may be and still add to its passage's score.</summary>
+    const double SupportMargin = 0.15;
 
     /// <summary>Removes indentation shared by every non-blank line (keeps code's relative indentation).</summary>
     public static string Dedent(string text)
@@ -298,7 +333,8 @@ public static partial class LeanText
             ? $" e.g. get_document(\"{first.DocumentName}\", {first.ReadHint})"
             : "";
         var header = $"{passages.Count} result{(passages.Count == 1 ? "" : "s")} for \"{query}\" (best first). " +
-                     $"To read more around a result, call get_document with its name and range{example}.\n";
+                     $"Long chunks may be shortened here; get_chunk(id) returns a chunk whole. To read around a result, " +
+                     $"call get_document with its name and range{example}.\n";
         var terms = QueryTerms(query);
         var citations = passages.Select(Citation).ToList();
         var fixedChars = header.Length + citations.Sum(c => c.Length + 2);
@@ -321,7 +357,11 @@ public static partial class LeanText
     {
         var parts = new List<string> { p.DocumentName, p.Collection };
         if (p.Location.Length > 0) parts.Add(p.Location + (p.Ocr ? " (OCR)" : ""));
-        if (p.Heading is { } h) parts.Add("§" + (h.Length > 70 ? h[..69] + "…" : h));
+        if (p.SourcePages.Length > 0) parts.Add(p.SourcePages);
+        if (p.Heading is { } h) parts.Add("§" + (h.Length > 120 ? h[..119] + "…" : h));
+        if (p.Title is { } t) parts.Add($"\"{t}\"");
+        if (p.Kind is { } k) parts.Add(p.Symbol is { } sym ? $"{k} {sym}" : k);
+        if (p.ChunkIds.Count > 0) parts.Add("chunk " + string.Join("+", p.ChunkIds));
         if (p.AlsoIn.Count > 0) parts.Add("also in: " + string.Join(", ", p.AlsoIn.Take(2)));
         return string.Join(" · ", parts);
     }

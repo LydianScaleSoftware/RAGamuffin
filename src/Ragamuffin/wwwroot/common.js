@@ -46,35 +46,47 @@ async function checkHealth() {
   }
 }
 
-/** The header switch that lets agents (MCP clients such as opencode) use the library, or turns their calls into no-ops. */
+/**
+ * The header switches: whether agents (MCP clients such as Claude Code) may use the library at all, and whether they
+ * may change it. Off turns the affected tool calls into no-ops that say so.
+ */
 async function initAgentsSwitch() {
-  const box = $("agents-enabled");
-  if (!box) return;
+  const read = $("agents-enabled");
+  const write = $("agents-writes");
+  if (!read) return;
   const show = (s) => {
-    box.checked = s.enabled;
-    $("agents-label").textContent = s.enabled ? "Agents on" : "Agents off";
-    box.closest("label").classList.toggle("off", !s.enabled);
+    read.checked = s.enabled;
+    $("agents-label").textContent = s.enabled ? "Agents read" : "Agents off";
+    read.closest("label").classList.toggle("off", !s.enabled);
+    if (write) {
+      write.checked = s.writes;
+      $("agents-writes-label").textContent = s.writes ? "Agents write" : "Read only";
+      write.closest("label").classList.toggle("off", !s.writes);
+      write.disabled = !s.enabled;
+    }
   };
   try {
     show(await api("/api/settings/agents"));
-    box.disabled = false;
+    read.disabled = false;
   } catch {
     $("agents-label").textContent = "Agents ?";
     return;
   }
-  box.addEventListener("change", async () => {
+  const change = async (box, body) => {
     box.disabled = true;
     try {
       show(await api("/api/settings/agents", {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: box.checked }),
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }));
     } catch (e) {
       box.checked = !box.checked;
       alert(`Couldn't change the agents setting: ${e.message}`);
     } finally {
-      box.disabled = false;
+      box.disabled = box === write && !read.checked;
     }
-  });
+  };
+  read.addEventListener("change", () => change(read, { enabled: read.checked }));
+  write?.addEventListener("change", () => change(write, { writes: write.checked }));
 }
 
 initAgentsSwitch();

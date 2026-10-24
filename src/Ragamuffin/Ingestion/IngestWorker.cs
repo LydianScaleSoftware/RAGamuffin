@@ -139,6 +139,13 @@ public sealed class IngestWorker(
             return;
         }
 
+        // Chunks Claude chose keep their boundaries; only if they no longer fit the text does the chunker take over.
+        if (doc.ChunkSource == ChunkSources.Claude)
+        {
+            if (await scope.ServiceProvider.GetRequiredService<ClaudeIndexer>().RebuildAsync(doc, ct)) return;
+            doc.ChunkSource = ChunkSources.Auto;
+        }
+
         var extracted = TextExtractor.Extract(doc.Name, bytes);
         var drafts = NewChunker().Chunk(extracted);
         if (drafts.Count == 0)
@@ -272,8 +279,10 @@ public sealed class IngestWorker(
                     page.LayoutJson = result?.RegionsJson;
                     page.LayoutAngle = result?.Angle;
                     page.LayoutAt = result is null ? null : page.OcrAt;
-                    if (PdfPages.HasUsefulText(text)) page.Source = PageSource.Ocr;
-                    else blank.Add(number);
+                    // Text Claude checked stays in use; the new OCR becomes what removing Claude's text falls back to.
+                    if (!PdfPages.HasUsefulText(text)) blank.Add(number);
+                    else if (page.Source == PageSource.Claude) page.SourceBeforeClaude = PageSource.Ocr;
+                    else page.Source = PageSource.Ocr;
                 }
                 else
                 {
