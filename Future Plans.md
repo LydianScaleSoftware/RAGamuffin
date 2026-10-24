@@ -4,15 +4,18 @@ Improvements we may make later, plus decisions worth revisiting. Each entry says
 
 ## Seeing what Claude changed
 
-Claude can now change the library through MCP (save page text, add conversions as Claudomatics, re-chunk, delete). The web UI shows the results (the **Claude** and **Claudomatics** badges, the **Claudomatics** page, "from …" / "→ …" links, the **Updated** time, chunk titles and summaries in **Inspect**), but not what changed, when or why.
+Claude can now change the library through MCP (save page text, add conversions as Claudomatics, re-chunk, delete). The web UI shows the results (the **Claude** and **Claudomatics** badges, the **Claudomatics** and **Conversions** pages, the **Source…** / **Conversion…** dialogs, the **Updated** time, chunk titles and summaries in **Inspect**), but not what changed, when or why.
 
 ### Pages view for each PDF
 A per-page screen: the page image beside the text in use, with its source marked (embedded, layout, glm-ocr or Claude), Claude's note for the page, and a comparison with the text it replaced. Buttons per page to switch back to an earlier version or remove Claude's text, and a filter for "pages needing review" matching `list_pages`.
 - *Replaces* the earlier "side-by-side page review" plan, which predates Claude's page text.
-- *Why it's cheap now:* everything it shows is already stored (`document_pages` keeps embedded, layout, OCR and Claude text, `claude_note`, and `source_before_claude`), and pages render to PNG for `get_page` already. It needs a page-image endpoint, the view, a text diff, and per-page set-source endpoints that re-index the document.
+- *Why it's cheap now:* everything it shows is already stored (`document_pages` keeps embedded, layout, OCR and Claude text, `claude_note`, and `source_before_claude`), and pages render to PNG for `get_page` already. The page-image endpoint exists (`GET /api/documents/{id}/pages/{page}/image`, used by the Claudomatics page); it still needs the view, a text diff, and per-page set-source endpoints that re-index the document.
 
 ### Claudomatics page (built)
 The **Claudomatics** page lists every chunk Claude chose, grouped by day and document, with edit, delete, export and the source page image. Possible next steps: bulk select (delete or re-summarize several), a "summary missing" filter, and asking Claude from the page to re-chunk a document.
+
+### Conversions page (built)
+The **Conversions** page lists each conversion under its source document with the pages it covers, and downloads one conversion, all of a source's conversions as a zip, or the source file. Possible next steps: a combined download that re-assembles a manual from its chapter conversions in page order, and showing which source pages have no conversion yet.
 
 ### Activity log
 A record of every change made through the write tools (`import_file`, `add_document`, `set_chunks`, `set_page_text`, `delete_document`) and of the web UI's own uploads, re-indexes and deletes: time, document, what changed (pages saved or confirmed, chunk counts before and after, conversion links), Claude's notes, and which client made it. Shown as an **Activity** list (and "recent changes" on the Stats page), filterable by document.

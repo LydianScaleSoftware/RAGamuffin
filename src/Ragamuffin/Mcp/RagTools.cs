@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
+using Ragamuffin.Api;
 using Ragamuffin.Data;
 using Ragamuffin.Search;
 
@@ -124,7 +125,14 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
                 d.Collection, d.Name, d.ContentType, d.Language, d.PageCount, d.ChunkCount, d.Status, d.OcrPages, d.ChunkSource, d.Encoding, d.SizeBytes,
                 d.Error, d.IssuePages,
                 Source = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
-                ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).Select(o => o.Name).FirstOrDefault(),
+                SourceSpans = db.Chunks.Where(k => d.SourceDocumentId != null && k.DocumentId == d.Id && k.Page != null)
+                    .Select(k => new DocumentEndpoints.PageSpan(k.Page!.Value, k.PageEnd)).ToList(),
+                ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).OrderBy(o => o.Name)
+                    .Select(o => new
+                    {
+                        o.Name,
+                        Spans = o.Chunks.Where(k => k.Page != null).Select(k => new DocumentEndpoints.PageSpan(k.Page!.Value, k.PageEnd)).ToList(),
+                    }).ToList(),
             })
             .ToListAsync(ct);
         if (docs.Count == 0)
@@ -144,8 +152,9 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
                 : d.Language ?? d.ContentType;
             line.Append($"- {d.Name} ({kind}, {d.ChunkCount} chunks{(d.ChunkSource == ChunkSources.Claude ? ", Claudomatics" : "")}" +
                         $"{(d.Status == DocumentStatus.Ready ? "" : ", " + d.Status.Replace('_', ' '))})" +
-                        (d.Source is null ? "" : $" — converted from {d.Source}") +
-                        (d.ConvertedTo is null ? "" : $" — searched through its conversion {d.ConvertedTo}") +
+                        (d.Source is null ? "" : $" — conversion of {d.Source}, standing in for its {Covered(DocumentEndpoints.PageRanges(d.SourceSpans))}") +
+                        string.Concat(d.ConvertedTo.Select(c =>
+                            $" — {Covered(DocumentEndpoints.PageRanges(c.Spans))} searched through its conversion {c.Name}")) +
                         (d.Status == DocumentStatus.Ready && d.Error is not null ? $" — NOTICE: {d.Error}" : "") + "\n");
             if (sb.Length + line.Length > budget - 90) break;
             sb.Append(line);
@@ -158,6 +167,9 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
     }
 
     [McpServerTool(Name = "list_collections", ReadOnly = true)]
+    /// <summary>"pages 156–174", or "whole text" for a conversion without page numbers.</summary>
+    static string Covered(string? pages) => pages is null ? "whole text" : $"pages {pages}";
+
     [Description("What each collection covers, with keywords, sizes and example titles.")]
     public Task<string> ListCollections(
         [Description("Describe just this collection, in more detail.")] string? collection = null,

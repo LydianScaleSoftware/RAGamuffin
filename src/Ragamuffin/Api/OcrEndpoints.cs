@@ -6,7 +6,8 @@ using Ragamuffin.Ocr;
 
 namespace Ragamuffin.Api;
 
-/// <summary><c>Scope</c> is "missing" (pages without text), "suspect" (plus pages that look like poor OCR) or "all".</summary>
+/// <summary><c>Scope</c> is "missing" (pages without text), "suspect" (plus pages that look like poor OCR), "problems" (pages whose
+/// last run recorded a problem, not yet checked by Claude) or "all".</summary>
 public sealed record RunOcrRequest(string? Scope);
 
 /// <summary><c>Redo</c> re-analyzes pages that were analyzed before.</summary>

@@ -93,14 +93,16 @@ Any other client that speaks MCP over HTTP works too; answers are sized for Clau
 - `search_documents(query, top_k=8, collection?, collections?, exclude?)`: up to 25 cited passages, found by meaning and by exact words. `collections` searches just those (muted or not); `exclude` leaves some out; results say which muted collections weren't searched. Each shows its document, location, section, title and chunk id. Neighbouring server-made chunks are joined; near-duplicates from other editions are dropped and noted as "also in".
 - `get_chunk(ids, neighbors=0)`: chunks whole, by id, optionally with the chunks around them.
 - `get_document(name_or_id, pages?, lines?, section?, collection?)`: with no range, the outline (headings with line or page numbers); `pages="12-14"`, `lines="120-200"` or `section="Drawing Text"` read just that part, ending with where to continue. Partial names work.
-- `list_documents(filter?, collection?)`: names, types, sizes, chunk counts and conversions.
+- `list_documents(filter?, collection?)`: names, types, sizes, chunk counts, conversions (which PDF pages a Markdown conversion covers) and notices about OCR or layout problems.
 - `list_collections(collection?)`: what each collection covers (description, keywords), its size and example titles.
-- `list_pages(document, which?, pages?)` and `get_page(document, page)`: a PDF's pages that need review, and one page as an image beside every text version the server has (embedded, glm-ocr, layout, Claude's).
+- `list_pages(document, which?, pages?)`: a PDF's pages with their text source and quality. `which="review"` (the default) lists pages that need review, problem pages first; `"problems"` only pages whose last OCR or layout run went wrong, with what went wrong; `"all"` every page.
+- `get_page(document, page)`: one page as an image beside every text version the server has (embedded, glm-ocr, layout, Claude's), with the one in use marked, any recorded problem, and Claude's note.
+- `ask_library(question, collection?)`: optional, and only offered when `Rag:Mcp:AnswerModel` is set. A local model writes a short, cited answer from the best passages, for agents with small contexts; Claude doesn't need it.
 
 ### Tools that change the library
 
 - `import_file(path, collection?, name?)`: adds a file from this computer as is, like an upload.
-- `set_page_text(document, pages, reindex=true)`: saves Claude's text for PDF pages (from the page images), or confirms the text in use is right. Claude's text becomes the page's source; the other versions are kept, so it can be removed again.
+- `set_page_text(document, pages, reindex=true)`: saves Claude's text for PDF pages (from the page images) with a note on what was fixed, or confirms the text in use is right (`confirm: true`). Claude's text becomes the page's source, and a recorded OCR problem on the page no longer counts; the other versions are kept, so it can be removed again. A later glm-ocr run doesn't replace it. Saving several batches with `reindex=false` and the last with `reindex=true` re-indexes once.
 - `add_document(name, chunks, path | content, collection?, source_document?)`: adds a text document, usually Markdown Claude wrote from a PDF, with **chunks Claude chose (Claudomatics)**: line ranges with a title, section, summary, kind, symbol and source pages. A chunk is one unit of any size (a section, a table, a listing with its explanation, a reference entry, a whole function) up to 60,000 characters. With `source_document`, the PDF pages the conversion covers drop out of search, so results aren't duplicated.
 - `set_chunks(document, chunks)`: re-chunks a text document without re-sending it.
 - Binary files (ROMs, disk images, executables) given to `import_file` or `add_document` are stored **encoded** as a hex dump (offset, 16 bytes in hex, and their ASCII per line, like `xxd`), up to 1 MB, with the original bytes kept. Everything read from them is marked `⟦ENCODED BINARY · hex dump⟧`, and the web UI shows a **⬢ Encoded · hex** badge. Search finds byte patterns (`a9 00 8d`) and embedded strings; Claude can re-chunk a dump into titled routines or tables with `set_chunks`. The web upload still rejects binaries.
@@ -134,9 +136,28 @@ When a client connects, the server also sends **instructions** that are added to
 - **New collection…** opens the collections page ready to create one. After creating it, you return with the new collection selected.
 - Uploading the same name into the same collection replaces the document. Identical content is skipped.
 - Each document can be deleted, re-indexed or inspected. Inspecting shows its chunks, the extracted text and the original file.
-- **Test search** shows the passages a search returns.
+- **Filter** by collection and name, and sort by any column header (**Clear sort** goes back to collection, then name). The collection, name and Stats drill-down filters are remembered in the browser between visits; **Reset filters** shows everything again. The search boxes have a **✕** button to clear them.
+- **Test search** shows the passages a search returns, with an *include muted* box for muted collections.
 
-**Claudomatics page** (http://localhost:5077/claudomatics.html): every chunk Claude chose, grouped by the day it was written and by document, each with its title, kind, location, summary and the start of its text. Filter by text or collection. Click one to read it whole, fix its title or summary (it's re-embedded), delete it, or open the PDF page it came from beside it. Each document can be exported (a Markdown conversion as `.md`, a binary's hex dump as text), downloaded as original bytes if it's an encoded binary, or deleted. The **Claudomatics** badge on the Documents page links there.
+**Status badges** follow a ready document's status, stacked up to three high before starting another column:
+
+| Badge | Meaning |
+|---|---|
+| **OCR** (e.g. `OCR 187/194`) | Pages read by local OCR; the tooltip gives the model and date. |
+| **Layout** | Pages arranged by layout analysis. |
+| **Claude** | Pages whose text Claude checked or transcribed from the page images. |
+| **Claudomatics** | Claude chose this document's chunks; links to them on the Claudomatics page. |
+| **⬢ Encoded · hex** | A binary stored as a hex dump (see [Tools that change the library](#tools-that-change-the-library)). |
+| **Source…** | This document is a conversion of another one. Click for a dialog naming the source and the pages it stands in for. |
+| **Conversion…** / **Conversions…** | Some pages of this document are searched through a conversion. Click for a dialog listing each conversion and its pages. |
+| **N blank** | PDF pages with no text yet (use **Re-index…** to OCR them). |
+| ⚠ notice | The last OCR or layout run had problems on some pages; the tooltip says which. |
+
+The dialogs can be scrolled and have a **Copy** button.
+
+**Claudomatics page** (http://localhost:5077/claudomatics.html): every chunk Claude chose, grouped by the day it was written and by document, each with its title, kind, location, summary and the start of its text. Each document's group starts collapsed to its header (click to open; **Expand all** and **Collapse all** do every group; while you type a filter, matching groups open). Filter by text or collection. Click a Claudomatic to read it whole, fix its title or summary (it's re-embedded), delete it, or show the PDF page it came from beside it and step through neighbouring pages. Each document can be exported (a Markdown conversion as `.md`, a binary's hex dump as text), downloaded as original bytes if it's an encoded binary, or deleted; when the document also has Claudomatics written on other days, the delete dialog lists them and asks again. The **Claudomatics** badge on the Documents page links there, filtered to that document.
+
+**Conversions page** (http://localhost:5077/conversions.html): every document Claude made from another one (usually Markdown transcribed from a PDF), grouped by the source, with the source pages each conversion covers in search. Download a conversion in full, all of a source's conversions as a zip, or the original source file. The **Source…** and **Conversion…** badges on the Documents page open the same details in a dialog.
 
 **Collections page** (http://localhost:5077/collections.html):
 
@@ -151,15 +172,44 @@ API uploads that name a collection that doesn't exist yet create it automaticall
 
 Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs, up to 500 MB each (`Rag:MaxUploadBytes`). Binary files are rejected.
 
-**Conversions page** (http://localhost:5077/conversions.html): every document Claude made from another one (usually Markdown transcribed from a PDF), grouped by the source, with the source pages each conversion covers in search. Download a conversion in full, all of a source's conversions as a zip, or the original source file. The **Source…** and **Conversion…** badges on the Documents page open the same details in a dialog.
-
 **Stats page** (http://localhost:5077/stats.html):
 
 - **Totals per collection and overall:** documents, PDF pages, chunks, characters indexed, file and database size.
-- **Breakdowns:** document types and code languages; where each document's text comes from (original text, PDF embedded, embedded plus layout, OCR, mixed, no text yet); PDF pages by text source; status.
-- **Work remaining:** pages needing OCR, pages not yet laid out, with a rough time estimate; pages that look like poor old OCR; documents with notices.
+- **Claude's work:** Claudomatics (with their average size), PDF pages checked by Claude, and chunks left out of search because a conversion covers their pages.
+- **Breakdowns:** document types and code languages; where each document's text comes from (original text, PDF embedded, embedded plus layout, OCR, checked by Claude, mixed, no text yet); PDF pages by text source; status.
+- **Work remaining:** pages needing OCR, pages not yet laid out, with a rough time estimate; pages with OCR problems not yet checked by Claude; pages that look like poor old OCR; documents with notices.
 - **Other figures:** the largest documents and which OCR models read how many pages.
 - **Drill-downs:** almost every number links to the Documents page, filtered to the documents it counts (a banner shows the filter, with **Clear filter**). From there, **Select all shown** plus **Process…** or **Re-index…** fixes what the stats revealed.
+
+## HTTP API
+
+The web UI uses a JSON API under `/api`, on the same port. It has no authentication, which is why the server listens on `localhost` only.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/health` | Database and Ollama status, embedding model and dimensions. |
+| `GET /api/documents?collection=&q=` | Every document with its status, counts, badges' data, conversions and covered pages. |
+| `POST /api/documents` | Upload (multipart `files`, optional `collection`). |
+| `GET /api/documents/{id}` · `DELETE /api/documents/{id}` | One document's details · remove it, its chunks and stored file. |
+| `GET /api/documents/{id}/chunks` | Its chunks. |
+| `GET /api/documents/{id}/file` | The original file. |
+| `GET /api/documents/{id}/export` | The document's full text (`.md` for a Markdown conversion, `.txt` for a PDF's text or a hex dump). |
+| `GET /api/documents/{id}/pages/{page}/image` | A PDF page as an image. |
+| `POST /api/documents/{id}/reindex` · `POST /api/reindex-all` | Re-index one document · everything (e.g. after changing the embedding model). |
+| `POST /api/documents/{id}/ocr` | OCR with `{"scope": "missing" \| "suspect" \| "problems" \| "all"}`. |
+| `POST /api/documents/{id}/ocr/cancel` · `POST /api/documents/{id}/revert-ocr` | Cancel a run · go back to the PDF's embedded text. |
+| `POST /api/documents/{id}/layout` | Layout analysis (`{"redo": true}` re-analyzes pages done before). |
+| `POST /api/batch` | Queue OCR and/or layout for many PDFs (`documentIds` or `collection`; `dryRun` only previews). |
+| `GET /api/queue` · `POST /api/queue/cancel` | The processing queue · cancel all of it. |
+| `GET /api/search?q=&k=&collection=&includeMuted=` | Hybrid search, as **Test search** shows it. |
+| `GET /api/collections` and `POST /api/collections`, `/collections/rename`, `/collections/remove`, `/collections/details`, `/collections/suggest`, `/collections/mute` | List, create, rename, remove, describe, draft a description, mute. |
+| `GET /api/claudomatics?q=&collection=&limit=` | Claudomatics with snippets, for the Claudomatics page. |
+| `GET /api/chunks/{id}` · `PUT /api/chunks/{id}` · `DELETE /api/chunks/{id}` | One chunk · change its title or summary (re-embedded) · delete it. |
+| `GET /api/documents/{id}/claudomatic-dates` | When each of a document's Claudomatics was written (the delete dialog uses it to warn about other days). |
+| `GET /api/conversions` · `GET /api/conversions/{sourceId}/zip` | Conversions grouped by source · all of one source's conversions as a zip. |
+| `GET /api/stats` | Everything the Stats page shows. |
+| `GET /api/ocr` · `GET /api/layout` | Whether OCR and the layout service are available. |
+| `GET /api/settings/agents` · `PUT /api/settings/agents` | The **Agents read** / **Agents write** switches (`{"enabled": false}`, `{"writes": false}`). |
 
 ## OCR and layout analysis for PDFs
 
@@ -175,14 +225,16 @@ How pages are read:
 | Scanned (no text) | Turned upright; each region read by glm-ocr with a prompt suited to it (text, table, formula) | Whole page read by glm-ocr |
 | Digital (has text) | The PDF's own words placed into the regions: no re-OCR, so no new errors | The PDF's text in its stored order |
 
-Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading. Each page records what went wrong in its last run (glm-ocr failing on regions, no text found, layout analysis failing, a rotated page skipped), and the document's notice lists those pages. The notice is rebuilt from the pages on every re-index, so it lasts until the pages are re-run cleanly or Claude checks them; Claude sees it in `list_documents` and `get_document`, and `list_pages(which="problems")` lists the pages.
+Claude's text, when it has checked a page (see `set_page_text`), takes precedence over all of these.
+
+Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading. Each page records what went wrong in its last run (glm-ocr failing on regions, no text found, layout analysis failing, a rotated page skipped), and the document's notice lists those pages. The notice is rebuilt from the pages on every re-index, so it lasts until the pages are re-run cleanly or Claude checks them (glm-ocr's failures repeat on a re-run, since it reads the same image the same way, so having Claude check those pages is usually the fix); Claude sees it in `list_documents` and `get_document`, and `list_pages(which="problems")` lists the pages.
 
 **In the UI:**
 - **Status badges.** **OCR** marks pages read by local OCR, and **Layout** marks pages arranged by layout analysis. Their tooltips give counts, model and date. MCP results mark OCR'd passages too.
 - **Scans** stop at **needs OCR** after upload. **Run OCR** reads them.
 - **Re-index… on a PDF** offers:
   - *re-index*;
-  - *replace text with local OCR* (pages with problems in the last run, pages without text, suspected poor old OCR, or all pages);
+  - *replace text with local OCR* (pages with problems in the last run, pages without text, suspected poor old OCR, or all pages; pages Claude has checked keep Claude's text);
   - *analyze layout* (optionally re-analyzing pages done before);
   - *revert to embedded text*.
 - **Process…** queues many PDFs at once: the ticked documents, or every PDF in the current collection filter. Choose OCR, layout or both. A preview shows how many documents and pages are involved and a rough duration before you queue.
@@ -204,7 +256,7 @@ Either way, running headers, footers and page numbers are dropped (only when the
   - Documents Claude adds with `add_document` keep its Claudomatics instead, and re-indexing keeps them.
   - Tiny sections merge with their neighbours instead of becoming useless one-line chunks.
 - **Embedding** (`Embeddings/OllamaEmbedder.cs`): calls `POST /api/embed` in batches of 32. Queries get the task instruction qwen3-embedding expects. Each chunk is embedded with a header first (file name, language, section, page, and for Claude's chunks the title, symbol and summary), then its text.
-- **Search** (`Search/SearchService.cs`): runs pgvector cosine search (HNSW index) and Postgres full-text search (`websearch_to_tsquery`) and merges them with reciprocal rank fusion. Exact identifiers such as `CB-12` or class names are found even when embeddings miss them.
+- **Search** (`Search/SearchService.cs`): runs pgvector cosine search (HNSW index) and Postgres full-text search (`websearch_to_tsquery`) and merges them with reciprocal rank fusion. Exact identifiers such as `CB-12` or class names are found even when embeddings miss them. Muted collections are skipped unless named, and PDF pages covered by a conversion are skipped so the same text isn't found twice. MCP results then join neighbouring server-made chunks into passages, drop near-duplicates from other editions, and excerpt long passages around the question's words.
 - **Ingestion** runs in two independent lanes, each handling one job at a time: indexing (uploads and re-indexes) and OCR. Uploads finish within seconds even during a long OCR run. Uploading a new version of a document while it's being OCR'd cancels that run and indexes the new file. Search keeps working throughout, and a document being OCR'd stays searchable with its previous text.
 - **Extracted text** is cleaned before storage: NUL characters, stray control characters and broken surrogates are removed, because Postgres rejects them.
 
@@ -219,7 +271,7 @@ ConnectionStrings__Rag="Host=localhost;Port=5432;Database=rag_dev;Username=rag;P
 ```
 
 ```bash
-dotnet test                                                       # chunker, extractor, fusion tests
+dotnet test                                                       # unit tests (chunking, extraction, layout, search merging, Claudomatics)
 dotnet ef migrations add <Name> -p src/Ragamuffin -o Data/Migrations
 ```
 
