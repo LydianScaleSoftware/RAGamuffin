@@ -110,3 +110,58 @@ for (const input of document.querySelectorAll("input[data-clearable]")) {
   });
   wrap.append(input, button);
 }
+
+/** A dialog for details too long for a tooltip; the text can be scrolled, selected and copied. */
+function showDetails(title, html) {
+  let dlg = $("detailsDialog");
+  if (!dlg) {
+    dlg = document.createElement("dialog");
+    dlg.id = "detailsDialog";
+    dlg.innerHTML = `<h2 id="detailsTitle"></h2><div id="detailsBody" class="details-body"></div>
+      <div class="row end"><button id="detailsCopy" class="secondary">Copy</button><button id="detailsClose">Close</button></div>`;
+    document.body.append(dlg);
+    $("detailsClose").addEventListener("click", () => dlg.close());
+    $("detailsCopy").addEventListener("click", async () => {
+      await navigator.clipboard.writeText($("detailsBody").innerText);
+      $("detailsCopy").textContent = "Copied";
+      setTimeout(() => $("detailsCopy").textContent = "Copy", 1500);
+    });
+  }
+  $("detailsTitle").textContent = title;
+  $("detailsBody").innerHTML = html;
+  dlg.showModal();
+}
+
+/** "a PDF", "a Markdown document"… from a document's name, for saying what was converted into what. */
+function docKind(name) {
+  const ext = String(name).split(".").pop().toLowerCase();
+  return { pdf: "a PDF", md: "a Markdown document", markdown: "a Markdown document", txt: "a text document" }[ext] ?? "a document";
+}
+
+/** Which pages of the source a conversion covers, given the "156–174" page list the API sends. */
+const coveredPages = (pages) => pages ? `pages ${esc(pages)}` : "all of its pages (the conversion has no page numbers)";
+
+/** Details for a conversion's "Source…" badge: d has name, sourceName and sourcePages. */
+function showSourceDetails(d) {
+  showDetails("Converted from another document", `
+    <p><strong>${esc(d.name)}</strong> is ${docKind(d.name)} that Claude made from ${docKind(d.sourceName)},
+      <strong>${esc(d.sourceName)}</strong>, by transcribing ${coveredPages(d.sourcePages)} and splitting the text
+      into Claudomatics (search chunks Claude chose).</p>
+    <p>Search uses this document in place of those pages of the source, whose own chunks for them are left out so the
+      same text isn't found twice. The source's other pages are searched as usual, and its page images stay
+      available.</p>`);
+}
+
+/** Details for a source's "Conversion…" badge: d has name and convertedTo [{ name, pages }]. */
+function showConversionDetails(d) {
+  const many = d.convertedTo.length > 1;
+  const items = d.convertedTo.map((c) =>
+    `<li>${c.pages ? `Pages ${esc(c.pages)}` : "All pages"} → <strong>${esc(c.name)}</strong> (${docKind(c.name)})</li>`).join("");
+  showDetails(many ? "Searched through conversions" : "Searched through a conversion", `
+    <p>Claude transcribed part of this document, <strong>${esc(d.name)}</strong> (${docKind(d.name)}), into
+      ${many ? "new documents" : "a new document"} and split the text into Claudomatics (search chunks Claude chose).
+      Search uses ${many ? "those documents" : "that document"} for these pages:</p>
+    <ul>${items}</ul>
+    <p>This document's own chunks for those pages are left out of search, so the same text isn't found twice. Its other
+      pages are searched as usual, and every page image stays available.</p>`);
+}

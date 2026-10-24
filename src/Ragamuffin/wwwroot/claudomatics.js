@@ -69,7 +69,7 @@ function render() {
             <span class="caret" aria-hidden="true">▸</span>
             <strong>${esc(first.documentName)}</strong>
             <span class="muted">· ${esc(collectionLabel(first.collection))}</span>${encodedBadge(first.encoding)}
-            ${first.sourceName ? `<span class="badge muted-badge" title="Converted from ${esc(first.sourceName)}">Source…</span>` : ""}
+            ${first.sourceName ? `<button type="button" class="badge muted-badge" data-source-details="${first.documentId}" title="Converted from another document; click for details">Source…</button>` : ""}
             <span class="muted small">${chunks.length} Claudomatic${chunks.length === 1 ? "" : "s"}</span>
           </div>
           <div class="row">
@@ -216,6 +216,12 @@ $("deleteConfirm").addEventListener("click", async () => {
 $("groups").addEventListener("click", async (e) => {
   const del = e.target.closest("[data-delete-doc]");
   if (del) { await confirmDelete(del); return; }
+  const source = e.target.closest("[data-source-details]");
+  if (source) {
+    // The page ranges come with the documents list; this page only has the chunks it shows.
+    const all = await api("/api/documents");
+    return showSourceDetails(all.find((d) => d.id === source.dataset.sourceDetails));
+  }
   if (e.target.closest("a, button")) return;   // Export / Original bytes links
   const row = e.target.closest(".claudo-row");
   if (row) { openChunk(row.dataset.id); return; }

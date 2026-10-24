@@ -151,6 +151,8 @@ API uploads that name a collection that doesn't exist yet create it automaticall
 
 Supported files: Markdown, plain text, source code (about 60 extensions) and PDFs, up to 500 MB each (`Rag:MaxUploadBytes`). Binary files are rejected.
 
+**Conversions page** (http://localhost:5077/conversions.html): every document Claude made from another one (usually Markdown transcribed from a PDF), grouped by the source, with the source pages each conversion covers in search. Download a conversion in full, all of a source's conversions as a zip, or the original source file. The **Source…** and **Conversion…** badges on the Documents page open the same details in a dialog.
+
 **Stats page** (http://localhost:5077/stats.html):
 
 - **Totals per collection and overall:** documents, PDF pages, chunks, characters indexed, file and database size.

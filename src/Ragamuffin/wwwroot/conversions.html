@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conversions · RAGamuffin</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>RAGamuffin</h1>
+    <nav>
+      <a href="/">Documents</a>
+      <a href="/collections.html">Collections</a>
+      <a href="/stats.html">Stats</a>
+      <a href="/claudomatics.html">Claudomatics</a>
+      <a href="/conversions.html" class="active">Conversions</a>
+    </nav>
+    <label class="agents-switch" title="When off, Claude and other agents get a note instead of search results.">
+      <input type="checkbox" id="agents-enabled" role="switch" disabled>
+      <span class="track"><span class="thumb"></span></span>
+      <span id="agents-label">Agents read</span>
+    </label>
+    <label class="agents-switch" title="When off, agents can search and read but can't add documents, save page text, re-chunk or delete.">
+      <input type="checkbox" id="agents-writes" role="switch" disabled>
+      <span class="track"><span class="thumb"></span></span>
+      <span id="agents-writes-label">Agents write</span>
+    </label>
+    <span id="health" class="pill">checking…</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <div>
+        <h2>Conversions</h2>
+        <p class="hint">Documents Claude made from another one, usually Markdown transcribed from pages of a PDF and split into
+          Claudomatics. Search uses a conversion in place of the source pages it covers. Download any of them in full, or all
+          of a source's conversions as a zip.</p>
+      </div>
+      <div class="row toolbar">
+        <input id="filter" class="grow" type="search" data-clearable placeholder="Filter by conversion or source name…">
+        <span id="count" class="muted small"></span>
+      </div>
+      <div id="groups"><p class="muted">Loading…</p></div>
+    </section>
+  </main>
+
+  <script src="common.js"></script>
+  <script src="conversions.js"></script>
+</body>
+</html>

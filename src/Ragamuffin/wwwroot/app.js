@@ -119,11 +119,9 @@ function statusCell(d) {
       if (d.encoding)
         badge += ` <span class="badge encoded" title="A binary file stored as text (${esc(d.encoding)} dump: offset, bytes and ASCII per line). The original bytes are kept; Inspect → Original downloads them.">⬢ Encoded · ${esc(d.encoding)}</span>`;
       if (d.sourceName)
-        badge += ` <span class="badge muted-badge" title="Converted from ${esc(d.sourceName)}">Source…</span>`;
-      if (d.convertedTo?.length) {
-        const many = d.convertedTo.length > 1;
-        badge += ` <span class="badge muted-badge" title="Searched through its conversion${many ? "s" : ""}; this document's own chunks are left out of search:\n${esc(d.convertedTo.join("\n"))}">Conversion${many ? "s" : ""}…</span>`;
-      }
+        badge += ` <button type="button" class="badge muted-badge" data-source-details="${d.id}" title="Converted from another document; click for details">Source…</button>`;
+      if (d.convertedTo?.length)
+        badge += ` <button type="button" class="badge muted-badge" data-conversion-details="${d.id}" title="Some pages are searched through a conversion; click for details">Conversion${d.convertedTo.length > 1 ? "s" : ""}…</button>`;
       const empty = d.contentType === "pdf" && d.emptyPages > 0
         ? ` <span class="badge muted-badge" title="${d.emptyPages} page${d.emptyPages > 1 ? "s have" : " has"} no text; use Re-index… to OCR them">${d.emptyPages} blank</span>`
         : "";
@@ -300,8 +298,10 @@ function renderDocs() {
 }
 
 $("docs").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr]");
+  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr],[data-source-details],[data-conversion-details]");
   if (!t) return;
+  if (t.dataset.sourceDetails) return showSourceDetails(docs.find((x) => x.id === t.dataset.sourceDetails));
+  if (t.dataset.conversionDetails) return showConversionDetails(docs.find((x) => x.id === t.dataset.conversionDetails));
   try {
     if (t.dataset.view) return openViewer(t.dataset.view);
     if (t.dataset.reindex) {

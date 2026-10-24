@@ -34,7 +34,15 @@ public static class DocumentEndpoints
                     d.ChunkSource, d.Encoding,
                     ClaudePages = db.Pages.Count(p => p.DocumentId == d.Id && p.Source == PageSource.Claude),
                     SourceName = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
-                    ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).OrderBy(o => o.Name).Select(o => o.Name).ToList(),
+                    // Page spans of a conversion's chunks: the PDF pages it stands in for in search.
+                    SourceSpans = db.Chunks.Where(k => d.SourceDocumentId != null && k.DocumentId == d.Id && k.Page != null)
+                        .Select(k => new PageSpan(k.Page!.Value, k.PageEnd)).ToList(),
+                    ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).OrderBy(o => o.Name)
+                        .Select(o => new
+                        {
+                            o.Name,
+                            Spans = o.Chunks.Where(k => k.Page != null).Select(k => new PageSpan(k.Page!.Value, k.PageEnd)).ToList(),
+                        }).ToList(),
                 })
                 .ToListAsync(ct);
             // Text origin and raw-embedded page counts match the Stats page, so its drill-down links filter exactly.
@@ -47,7 +55,9 @@ public static class DocumentEndpoints
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
-                    d.ChunkSource, d.Encoding, d.ClaudePages, d.SourceName, d.ConvertedTo,
+                    d.ChunkSource, d.Encoding, d.ClaudePages, d.SourceName,
+                    SourcePages = d.SourceName is null ? null : PageRanges(d.SourceSpans),
+                    ConvertedTo = d.ConvertedTo.Select(c => new { c.Name, Pages = PageRanges(c.Spans) }),
                     Origin = (d.Encoding is not null ? TextOrigin.EncodedBinary : StatsService.Classify(d.ContentType, mix)).ToString(),
                     RawEmbeddedPages = mix?.Embedded ?? 0,
                 };
@@ -230,6 +240,25 @@ public static class DocumentEndpoints
                 dimensions = dims,
             }, statusCode: healthy ? 200 : 503);
         });
+    }
+
+    internal sealed record PageSpan(int Page, int? PageEnd);
+
+    /// <summary>"156–174, 180" for the pages a set of chunk spans covers; null when none has a page (a conversion
+    /// without page numbers stands in for the whole PDF).</summary>
+    internal static string? PageRanges(IEnumerable<PageSpan> spans)
+    {
+        var pages = spans.SelectMany(s => Enumerable.Range(s.Page, Math.Max(1, (s.PageEnd ?? s.Page) - s.Page + 1)))
+            .Distinct().Order().ToList();
+        if (pages.Count == 0) return null;
+        var parts = new List<string>();
+        for (int i = 0, start = 0; i < pages.Count; i++)
+        {
+            if (i + 1 < pages.Count && pages[i + 1] == pages[i] + 1) continue;
+            parts.Add(start == i ? $"{pages[i]}" : $"{pages[start]}–{pages[i]}");
+            start = i + 1;
+        }
+        return string.Join(", ", parts);
     }
 }
 
