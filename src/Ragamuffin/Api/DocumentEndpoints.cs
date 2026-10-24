@@ -34,7 +34,7 @@ public static class DocumentEndpoints
                     d.ChunkSource, d.Encoding,
                     ClaudePages = db.Pages.Count(p => p.DocumentId == d.Id && p.Source == PageSource.Claude),
                     SourceName = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
-                    ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).Select(o => o.Name).FirstOrDefault(),
+                    ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).OrderBy(o => o.Name).Select(o => o.Name).ToList(),
                 })
                 .ToListAsync(ct);
             // Text origin and raw-embedded page counts match the Stats page, so its drill-down links filter exactly.

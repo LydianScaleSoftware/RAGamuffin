@@ -119,13 +119,16 @@ function statusCell(d) {
       if (d.encoding)
         badge += ` <span class="badge encoded" title="A binary file stored as text (${esc(d.encoding)} dump: offset, bytes and ASCII per line). The original bytes are kept; Inspect → Original downloads them.">⬢ Encoded · ${esc(d.encoding)}</span>`;
       if (d.sourceName)
-        badge += ` <span class="badge muted-badge" title="Converted from ${esc(d.sourceName)}">from ${esc(d.sourceName.split("/").pop())}</span>`;
-      if (d.convertedTo)
-        badge += ` <span class="badge muted-badge" title="Searched through its conversion ${esc(d.convertedTo)}; this document's own chunks are left out of search">→ ${esc(d.convertedTo.split("/").pop())}</span>`;
+        badge += ` <span class="badge muted-badge" title="Converted from ${esc(d.sourceName)}">Source…</span>`;
+      if (d.convertedTo?.length) {
+        const many = d.convertedTo.length > 1;
+        badge += ` <span class="badge muted-badge" title="Searched through its conversion${many ? "s" : ""}; this document's own chunks are left out of search:\n${esc(d.convertedTo.join("\n"))}">Conversion${many ? "s" : ""}…</span>`;
+      }
       const empty = d.contentType === "pdf" && d.emptyPages > 0
         ? ` <span class="badge muted-badge" title="${d.emptyPages} page${d.emptyPages > 1 ? "s have" : " has"} no text; use Re-index… to OCR them">${d.emptyPages} blank</span>`
         : "";
-      return `<span class="status-ready">ready</span>${badge}${empty}${notice}`;
+      const flair = badge + empty;
+      return `<span class="status-ready">ready</span>${flair ? ` <span class="badges">${flair}</span>` : ""}${notice}`;
     }
   }
 }

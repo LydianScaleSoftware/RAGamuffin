@@ -69,7 +69,7 @@ function render() {
             <span class="caret" aria-hidden="true">▸</span>
             <strong>${esc(first.documentName)}</strong>
             <span class="muted">· ${esc(collectionLabel(first.collection))}</span>${encodedBadge(first.encoding)}
-            ${first.sourceName ? `<span class="badge muted-badge" title="Converted from ${esc(first.sourceName)}">from ${esc(first.sourceName.split("/").pop())}</span>` : ""}
+            ${first.sourceName ? `<span class="badge muted-badge" title="Converted from ${esc(first.sourceName)}">Source…</span>` : ""}
             <span class="muted small">${chunks.length} Claudomatic${chunks.length === 1 ? "" : "s"}</span>
           </div>
           <div class="row">
