@@ -24,6 +24,9 @@ public sealed record Passage(
     public string? Kind { get; init; }
     public string? Symbol { get; init; }
 
+    /// <summary>"hex" when the passage is from a binary file stored as a hex dump.</summary>
+    public string? Encoding { get; init; }
+
     /// <summary>
     /// "lines 10-40", "page 12", "pages 12-13", or "" when the location is unknown. Lines win when a chunk has both:
     /// a Markdown conversion's chunk records the PDF pages it came from (see <see cref="SourcePages"/>).
@@ -111,7 +114,7 @@ public static partial class LeanText
                 run[0].Page, run[^1].PageEnd ?? run[^1].Page, run.Any(r => r.Ocr), Dedent(text), [])
             {
                 ChunkIds = run.Select(r => r.ChunkId).ToList(),
-                Title = hit.Title, Summary = hit.Summary, Kind = hit.Kind, Symbol = hit.Symbol,
+                Title = hit.Title, Summary = hit.Summary, Kind = hit.Kind, Symbol = hit.Symbol, Encoding = hit.Encoding,
             }, RunScore(run)));
         }
         return passages.OrderByDescending(p => p.Score).Select(p => p.P).ToList();
@@ -356,6 +359,7 @@ public static partial class LeanText
     public static string Citation(Passage p)
     {
         var parts = new List<string> { p.DocumentName, p.Collection };
+        if (p.Encoding is not null) parts.Add($"⟦ENCODED BINARY · {p.Encoding} dump⟧");
         if (p.Location.Length > 0) parts.Add(p.Location + (p.Ocr ? " (OCR)" : ""));
         if (p.SourcePages.Length > 0) parts.Add(p.SourcePages);
         if (p.Heading is { } h) parts.Add("§" + (h.Length > 120 ? h[..119] + "…" : h));

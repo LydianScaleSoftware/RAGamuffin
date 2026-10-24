@@ -1,6 +1,6 @@
 # RAGamuffin - A document library for Claude Code
 
-A local document library that Claude Code searches and builds through MCP. You add documents in the web UI, or Claude adds them: it checks PDF text against the page images, converts manuals to Markdown, and chooses its own chunks (a section, a table, a listing, a whole function). Chunks are embedded with `qwen3-embedding` on the Ollama box (`tb`, 10.10.10.2) and stored in Postgres with pgvector; search combines meaning and exact words.
+A local document library that Claude Code searches and builds through MCP. You add documents in the web UI, or Claude adds them: it checks PDF text against the page images, converts manuals to Markdown, and chooses its own chunks, called **Claudomatics** (Claude + automatic): a section, a table, a listing, a whole function. Chunks are embedded with `qwen3-embedding` on the Ollama box (`tb`, 10.10.10.2) and stored in Postgres with pgvector; search combines meaning and exact words.
 
 ```
 web UI ──upload──▶ RAGamuffin ──/api/embed──▶ Ollama (tb) qwen3-embedding
@@ -8,7 +8,7 @@ web UI ──upload──▶ RAGamuffin ──/api/embed──▶ Ollama (tb) qw
                      ▼  │ hybrid search (vector + full-text, RRF)
               Postgres 18 + pgvector (Docker)
                         ▲
-Claude Code ──MCP /mcp──┘  (search, read, check pages, add Markdown with its own chunks)
+Claude Code ──MCP /mcp──┘  (search, read, check pages, add Markdown as Claudomatics)
 ```
 
 | What | Where |
@@ -90,7 +90,7 @@ Any other client that speaks MCP over HTTP works too; answers are sized for Clau
 
 ### Reading tools
 
-- `search_documents(query, top_k=8, collection?)`: up to 25 cited passages, found by meaning and by exact words. Each shows its document, location, section, title and chunk id. Neighbouring server-made chunks are joined; near-duplicates from other editions are dropped and noted as "also in".
+- `search_documents(query, top_k=8, collection?, collections?, exclude?)`: up to 25 cited passages, found by meaning and by exact words. `collections` searches just those (muted or not); `exclude` leaves some out; results say which muted collections weren't searched. Each shows its document, location, section, title and chunk id. Neighbouring server-made chunks are joined; near-duplicates from other editions are dropped and noted as "also in".
 - `get_chunk(ids, neighbors=0)`: chunks whole, by id, optionally with the chunks around them.
 - `get_document(name_or_id, pages?, lines?, section?, collection?)`: with no range, the outline (headings with line or page numbers); `pages="12-14"`, `lines="120-200"` or `section="Drawing Text"` read just that part, ending with where to continue. Partial names work.
 - `list_documents(filter?, collection?)`: names, types, sizes, chunk counts and conversions.
@@ -101,8 +101,9 @@ Any other client that speaks MCP over HTTP works too; answers are sized for Clau
 
 - `import_file(path, collection?, name?)`: adds a file from this computer as is, like an upload.
 - `set_page_text(document, pages, reindex=true)`: saves Claude's text for PDF pages (from the page images), or confirms the text in use is right. Claude's text becomes the page's source; the other versions are kept, so it can be removed again.
-- `add_document(name, chunks, path | content, collection?, source_document?)`: adds a text document, usually Markdown Claude wrote from a PDF, with **chunks Claude chose**: line ranges with a title, section, summary, kind, symbol and source pages. A chunk is one unit of any size (a section, a table, a listing with its explanation, a reference entry, a whole function) up to 60,000 characters. With `source_document`, the PDF pages the conversion covers drop out of search, so results aren't duplicated.
+- `add_document(name, chunks, path | content, collection?, source_document?)`: adds a text document, usually Markdown Claude wrote from a PDF, with **chunks Claude chose (Claudomatics)**: line ranges with a title, section, summary, kind, symbol and source pages. A chunk is one unit of any size (a section, a table, a listing with its explanation, a reference entry, a whole function) up to 60,000 characters. With `source_document`, the PDF pages the conversion covers drop out of search, so results aren't duplicated.
 - `set_chunks(document, chunks)`: re-chunks a text document without re-sending it.
+- Binary files (ROMs, disk images, executables) given to `import_file` or `add_document` are stored **encoded** as a hex dump (offset, 16 bytes in hex, and their ASCII per line, like `xxd`), up to 1 MB, with the original bytes kept. Everything read from them is marked `⟦ENCODED BINARY · hex dump⟧`, and the web UI shows a **⬢ Encoded · hex** badge. Search finds byte patterns (`a9 00 8d`) and embedded strings; Claude can re-chunk a dump into titled routines or tables with `set_chunks`. The web upload still rejects binaries.
 - `delete_document(document)`: needs the exact name.
 
 `import_file` and `add_document` read files only from the folders in `Rag:Mcp:ImportRoots` (default: your home folder).
@@ -135,9 +136,12 @@ When a client connects, the server also sends **instructions** that are added to
 - Each document can be deleted, re-indexed or inspected. Inspecting shows its chunks, the extracted text and the original file.
 - **Test search** shows the passages a search returns.
 
+**Claudomatics page** (http://localhost:5077/claudomatics.html): every chunk Claude chose, grouped by the day it was written and by document, each with its title, kind, location, summary and the start of its text. Filter by text or collection. Click one to read it whole, fix its title or summary (it's re-embedded), delete it, or open the PDF page it came from beside it. Each document can be exported (a Markdown conversion as `.md`, a binary's hex dump as text), downloaded as original bytes if it's an encoded binary, or deleted. The **Claudomatics** badge on the Documents page links there.
+
 **Collections page** (http://localhost:5077/collections.html):
 
 - Create several collections at once, one name per line.
+- **Mute** a collection with its **Search** switch to leave it out of search, e.g. manuals for an older model or version that would contradict the ones you're working with. Nothing is deleted or re-indexed, and it takes effect on Claude's next search. A muted collection is still searched whenever it's named: tell Claude *"if you can't find it, try the System 6 Docs collection"* and it passes that name. Claude's instructions and `list_collections` show muted collections as such, search results say which ones were skipped, and **Test search** has an *include muted* box.
 - Rename by editing names in the table, then **Save changes**. All edits apply together or not at all, so swapping two names works. A rename carries over to every document in that collection.
 - Give each collection a **description** and **keywords**: these are what AI agents are told about the library (see [Connecting Claude Code](#connecting-claude-code)). **Suggest** drafts both with a local model (`Rag:Collections:SuggestModel`, default `qwen3:8b`) from the collection's titles and section headings; nothing is saved until **Save changes**.
 - Tick collections and **Remove selected…** to remove them. You choose whether their documents move to `(default)` or are deleted. A move is refused when `(default)` already has a document with the same name.
@@ -169,14 +173,14 @@ How pages are read:
 | Scanned (no text) | Turned upright; each region read by glm-ocr with a prompt suited to it (text, table, formula) | Whole page read by glm-ocr |
 | Digital (has text) | The PDF's own words placed into the regions: no re-OCR, so no new errors | The PDF's text in its stored order |
 
-Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading, and the job notice says so.
+Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading. Each page records what went wrong in its last run (glm-ocr failing on regions, no text found, layout analysis failing, a rotated page skipped), and the document's notice lists those pages. The notice is rebuilt from the pages on every re-index, so it lasts until the pages are re-run cleanly or Claude checks them; Claude sees it in `list_documents` and `get_document`, and `list_pages(which="problems")` lists the pages.
 
 **In the UI:**
 - **Status badges.** **OCR** marks pages read by local OCR, and **Layout** marks pages arranged by layout analysis. Their tooltips give counts, model and date. MCP results mark OCR'd passages too.
 - **Scans** stop at **needs OCR** after upload. **Run OCR** reads them.
 - **Re-index… on a PDF** offers:
   - *re-index*;
-  - *replace text with local OCR* (pages without text, suspected poor old OCR, or all pages);
+  - *replace text with local OCR* (pages with problems in the last run, pages without text, suspected poor old OCR, or all pages);
   - *analyze layout* (optionally re-analyzing pages done before);
   - *revert to embedded text*.
 - **Process…** queues many PDFs at once: the ticked documents, or every PDF in the current collection filter. Choose OCR, layout or both. A preview shows how many documents and pages are involved and a rough duration before you queue.
@@ -195,7 +199,7 @@ Either way, running headers, footers and page numbers are dropped (only when the
   - Markdown splits on sections and paragraphs and keeps a heading breadcrumb. Fenced code blocks stay intact.
   - Code splits on blank-line groups and records line ranges.
   - PDFs are chunked per page.
-  - Documents Claude adds with `add_document` keep Claude's own chunks instead, and re-indexing keeps them.
+  - Documents Claude adds with `add_document` keep its Claudomatics instead, and re-indexing keeps them.
   - Tiny sections merge with their neighbours instead of becoming useless one-line chunks.
 - **Embedding** (`Embeddings/OllamaEmbedder.cs`): calls `POST /api/embed` in batches of 32. Queries get the task instruction qwen3-embedding expects. Each chunk is embedded with a header first (file name, language, section, page, and for Claude's chunks the title, symbol and summary), then its text.
 - **Search** (`Search/SearchService.cs`): runs pgvector cosine search (HNSW index) and Postgres full-text search (`websearch_to_tsquery`) and merges them with reciprocal rank fusion. Exact identifiers such as `CB-12` or class names are found even when embeddings miss them.

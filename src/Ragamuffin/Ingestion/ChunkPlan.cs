@@ -12,7 +12,8 @@ public sealed record ChunkSpec(
     string? Kind = null,
     string? Symbol = null,
     int? Page = null,
-    int? PageEnd = null);
+    int? PageEnd = null,
+    DateTimeOffset? CreatedAt = null);
 
 /// <summary>A validated chunk with its text cut from the document.</summary>
 public sealed record PlannedChunk(ChunkSpec Spec, string Content);

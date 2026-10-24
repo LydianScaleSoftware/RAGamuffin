@@ -62,6 +62,12 @@ public sealed class McpOptions
     public List<string> ImportRoots { get; set; } = [];
 
     /// <summary>
+    /// Largest binary file import_file and add_document accept. Binaries are stored as a hex dump (about 4.9 times the
+    /// file's size as text) alongside the original bytes; the web upload still rejects them.
+    /// </summary>
+    public long MaxBinaryBytes { get; set; } = 1024 * 1024;
+
+    /// <summary>
     /// Largest chunk Claude may define with add_document or set_chunks. Big enough for a long section or a whole
     /// function; past it the chunk has to be split.
     /// </summary>

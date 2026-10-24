@@ -42,7 +42,7 @@ public sealed class ClaudeIndexer(
         if (name.Length == 0) throw new ChunkPlanException(["The document needs a name."]);
         if (TextExtractor.IsPdf(name)) throw new ChunkPlanException(["add_document takes text (Markdown, code or plain text), not a PDF; use import_file for PDFs."]);
 
-        var text = TextExtractor.DecodeText(bytes) ?? throw new ChunkPlanException(["The file isn't text."]);
+        var (text, encoding) = ToText(bytes);
         var plan = ChunkPlan.Validate(ChunkPlan.SplitLines(text), specs, Opt.Mcp.MaxChunkChars);
         if (!plan.Ok) throw new ChunkPlanException(plan.Errors);
 
@@ -65,7 +65,8 @@ public sealed class ClaudeIndexer(
             await db.Pages.Where(p => p.DocumentId == doc.Id).ExecuteDeleteAsync(ct);
         }
 
-        (doc.ContentType, doc.Language) = TextExtractor.Classify(name);
+        (doc.ContentType, doc.Language) = encoding is null ? TextExtractor.Classify(name) : ("binary", null);
+        doc.Encoding = encoding;
         doc.Sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
         doc.SizeBytes = bytes.Length;
         doc.ChunkSource = ChunkSources.Claude;
@@ -92,7 +93,7 @@ public sealed class ClaudeIndexer(
             throw new ChunkPlanException(["A PDF's chunks follow its pages. Convert it to Markdown and add that with add_document instead."]);
         if (doc.Status is DocumentStatus.Ocr or DocumentStatus.Pending)
             throw new ChunkPlanException([$"\"{doc.Name}\" is still being processed; try again shortly."]);
-        var text = doc.Text ?? TextExtractor.DecodeText(await files.ReadAsync(doc.Id, ct)) ?? "";
+        var text = doc.Text ?? ToText(await files.ReadAsync(doc.Id, ct)).Text;
         var plan = ChunkPlan.Validate(ChunkPlan.SplitLines(text), specs, Opt.Mcp.MaxChunkChars);
         if (!plan.Ok) throw new ChunkPlanException(plan.Errors);
 
@@ -109,9 +110,9 @@ public sealed class ClaudeIndexer(
     {
         var specs = await db.Chunks.AsNoTracking().Where(c => c.DocumentId == doc.Id && c.StartLine != null && c.EndLine != null)
             .OrderBy(c => c.Ordinal)
-            .Select(c => new ChunkSpec(c.StartLine!.Value, c.EndLine!.Value, c.Title, c.HeadingPath, c.Summary, c.Kind, c.Symbol, c.Page, c.PageEnd))
+            .Select(c => new ChunkSpec(c.StartLine!.Value, c.EndLine!.Value, c.Title, c.HeadingPath, c.Summary, c.Kind, c.Symbol, c.Page, c.PageEnd, c.CreatedAt))
             .ToListAsync(ct);
-        var text = TextExtractor.DecodeText(await files.ReadAsync(doc.Id, ct)) ?? "";
+        var text = ToText(await files.ReadAsync(doc.Id, ct)).Text;
         var plan = ChunkPlan.Validate(ChunkPlan.SplitLines(text), specs, Opt.Mcp.MaxChunkChars);
         if (!plan.Ok)
         {
@@ -132,6 +133,7 @@ public sealed class ClaudeIndexer(
             throw new InvalidOperationException(
                 $"Embedding model returned {vectors[0].Length} dimensions; the database expects {RagDbContext.EmbeddingDimensions}.");
 
+        var now = DateTimeOffset.UtcNow;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Chunks.Where(c => c.DocumentId == doc.Id).ExecuteDeleteAsync(ct);
         db.Chunks.AddRange(chunks.Select((c, i) => new Chunk
@@ -148,6 +150,8 @@ public sealed class ClaudeIndexer(
             EndLine = c.Spec.EndLine,
             Page = c.Spec.Page,
             PageEnd = c.Spec.PageEnd,
+            // Re-indexing keeps each Claudomatic's original date.
+            CreatedAt = c.Spec.CreatedAt ?? now,
             Embedding = new Vector(vectors[i]),
         }));
         doc.Text = text;
@@ -158,8 +162,17 @@ public sealed class ClaudeIndexer(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        log.LogInformation("Indexed {Collection}/{Name} with {Chunks} Claude-chosen chunks in {Seconds:F1}s",
+        log.LogInformation("Indexed {Collection}/{Name} with {Chunks} Claudomatics in {Seconds:F1}s",
             doc.Collection, doc.Name, chunks.Count, (DateTimeOffset.UtcNow - started).TotalSeconds);
+    }
+
+    /// <summary>The file as text, or as a hex dump (with its encoding) when it's binary.</summary>
+    (string Text, string? Encoding) ToText(byte[] bytes)
+    {
+        if (TextExtractor.DecodeText(bytes) is { } text) return (text, null);
+        if (bytes.Length > Opt.Mcp.MaxBinaryBytes)
+            throw new ChunkPlanException([$"The file is binary and larger than the {Opt.Mcp.MaxBinaryBytes:N0}-byte limit for encoded files (Rag:Mcp:MaxBinaryBytes)."]);
+        return (HexDump.Format(bytes), Encodings.Hex);
     }
 
     static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

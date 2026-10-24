@@ -43,6 +43,13 @@ public sealed class DocumentPage
     public int? LayoutAngle { get; set; }
     public DateTimeOffset? LayoutAt { get; set; }
 
+    /// <summary>
+    /// What went wrong the last time the page was OCR'd or laid out (no text found, glm-ocr failing on some regions,
+    /// layout analysis failing), or null. Kept through re-indexing; the page is listed for review until it's OCR'd
+    /// cleanly or Claude saves or confirms its text.
+    /// </summary>
+    public string? Issue { get; set; }
+
     /// <summary>Text Claude verified or transcribed from the page image (Markdown), or null.</summary>
     public string? ClaudeText { get; set; }
 

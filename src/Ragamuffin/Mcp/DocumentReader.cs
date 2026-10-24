@@ -18,7 +18,12 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
     int Budget => options.Value.Mcp.DocumentTokens;
 
     sealed record DocInfo(Guid Id, string Name, string Collection, string ContentType, string Status, string? Error,
-        int PageCount, int OcrPages, string? OcrModel);
+        int PageCount, int OcrPages, string? OcrModel, string? Encoding);
+
+    /// <summary>The banner put on everything read from a binary file, so it isn't mistaken for text the file contains.</summary>
+    public static string EncodedBanner(string name) =>
+        $"⟦ENCODED BINARY · hex dump⟧ {name} is a binary file stored as text: each line is the byte offset, 16 bytes in hex, " +
+        "and their printable ASCII. The original bytes are kept in the library.";
 
     public async Task<string> ReadAsync(string nameOrId, string? collection, string? pages, string? lines, string? section, CancellationToken ct)
     {
@@ -27,6 +32,13 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
         if (doc.Status is not (DocumentStatus.Ready or DocumentStatus.Ocr))
             return $"{doc.Name} is {doc.Status.Replace('_', ' ')}" + (doc.Error is null ? "." : $": {doc.Error}");
 
+        if (doc.Encoding is not null)
+            return EncodedBanner(doc.Name) + "\n\n" + await ReadPlainAsync(doc, lines, section, ct);
+        return await ReadPlainAsync(doc, lines, section, ct, pages);
+    }
+
+    async Task<string> ReadPlainAsync(DocInfo doc, string? lines, string? section, CancellationToken ct, string? pages = null)
+    {
         var isPdf = doc.ContentType == "pdf";
         if (!string.IsNullOrWhiteSpace(pages))
         {
@@ -40,7 +52,11 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
         }
         if (!string.IsNullOrWhiteSpace(section))
             return await ReadSectionAsync(doc, section.Trim(), ct);
-        return await OutlineAsync(doc, ct);
+        var outline = await OutlineAsync(doc, ct);
+        if (await db.Collections.AnyAsync(c => c.Name == doc.Collection && c.Muted, ct))
+            outline = $"Note: the {doc.Collection} collection is muted (left out of search unless named), so treat it as the user's " +
+                      "alternative or older source.\n\n" + outline;
+        return doc.Error is null ? outline : $"Notice: {doc.Error}\n\n{outline}";
     }
 
     /// <summary>Finds a document by id, exact name, case-insensitive name, file name, or a unique partial match.</summary>
@@ -55,7 +71,7 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
     {
         var q = db.Documents.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(collection)) q = q.Where(d => d.Collection == collection.Trim());
-        var all = await q.Select(d => new DocInfo(d.Id, d.Name, d.Collection, d.ContentType, d.Status, d.Error, d.PageCount, d.OcrPages, d.OcrModel))
+        var all = await q.Select(d => new DocInfo(d.Id, d.Name, d.Collection, d.ContentType, d.Status, d.Error, d.PageCount, d.OcrPages, d.OcrModel, d.Encoding))
             .ToListAsync(ct);
 
         var key = (nameOrId ?? "").Trim();

@@ -38,6 +38,7 @@ async function loadCollections() {
   }
   if (pendingCollectionFilter !== null) {
     pendingCollectionFilter = null;
+    saveFilters();   // also drops a remembered collection that no longer exists
     renderDocs();
   }
 }
@@ -114,7 +115,9 @@ function statusCell(d) {
         badge += ` <span class="badge claude" title="Text checked or transcribed by Claude from the page images: ${d.claudePages} of ${d.pageCount} pages">Claude${all ? "" : ` ${d.claudePages}/${d.pageCount}`}</span>`;
       }
       if (d.chunkSource === "claude")
-        badge += ` <span class="badge claude" title="Claude chose the chunk boundaries (sections, tables, listings or whole functions kept together)">Claude chunks</span>`;
+        badge += ` <a class="badge claude" href="/claudomatics.html?q=${encodeURIComponent(d.name)}" title="Claude chose the chunk boundaries (sections, tables, listings or whole functions kept together). Open them on the Claudomatics page.">Claudomatics</a>`;
+      if (d.encoding)
+        badge += ` <span class="badge encoded" title="A binary file stored as text (${esc(d.encoding)} dump: offset, bytes and ASCII per line). The original bytes are kept; Inspect → Original downloads them.">⬢ Encoded · ${esc(d.encoding)}</span>`;
       if (d.sourceName)
         badge += ` <span class="badge muted-badge" title="Converted from ${esc(d.sourceName)}">from ${esc(d.sourceName.split("/").pop())}</span>`;
       if (d.convertedTo)
@@ -145,14 +148,28 @@ function actionButtons(d) {
 
 // ---------- drill-down filters (from the Stats page) ----------
 // /?fc=<collection>&filter=<kind>:<value>&q=<name>. "fc" pre-selects the collection filter; "filter" narrows further.
+// The collection, name and drill-down filters are remembered per browser (like the sort), so leaving the page and coming
+// back keeps them. A link from the Stats page replaces them.
+const FILTERS_KEY = "ragamuffin.docFilters";
 const pageParams = new URLSearchParams(location.search);
-let pendingCollectionFilter = pageParams.get("fc");
-let drillFilter = pageParams.get("filter");
-if (pageParams.get("q")) $("filterName").value = pageParams.get("q");
+const fromLink = ["fc", "filter", "q"].some((k) => pageParams.has(k));
+const savedFilters = (() => { try { return JSON.parse(storageGet(FILTERS_KEY)) ?? {}; } catch { return {}; } })();
+let pendingCollectionFilter = fromLink ? pageParams.get("fc") ?? "" : savedFilters.fc ?? null;
+let drillFilter = fromLink ? pageParams.get("filter") : savedFilters.filter ?? null;
+$("filterName").value = (fromLink ? pageParams.get("q") : savedFilters.q) ?? "";
+if (fromLink) history.replaceState(null, "", location.pathname);
+
+function saveFilters() {
+  const fc = pendingCollectionFilter ?? $("filterCollection").value;
+  const q = $("filterName").value;
+  storageSet(FILTERS_KEY, JSON.stringify({ fc, q, filter: drillFilter }));
+  $("resetFilters").hidden = !fc && !q && !drillFilter;
+}
 
 const ORIGIN_LABELS = {
   OriginalText: "original text files", PdfEmbedded: "PDFs using embedded text", PdfEmbeddedLayout: "PDFs with layout-arranged text",
-  PdfOcr: "PDFs read entirely by OCR", PdfMixed: "PDFs mixing embedded and OCR text", PdfNoText: "PDFs with no text yet",
+  PdfOcr: "PDFs read entirely by OCR", PdfClaude: "PDFs whose text was all checked by Claude",
+  PdfMixed: "PDFs mixing embedded, OCR and Claude-checked text", PdfNoText: "PDFs with no text yet", EncodedBinary: "encoded binary files",
 };
 const STATUS_LABELS = { ready: "ready", needs_ocr: "needing OCR", failed: "failed", busy: "being processed" };
 
@@ -175,6 +192,8 @@ function drillPredicate(filter) {
         case "layout": return [(d) => pdf(d) && d.layoutPages > 0, "PDFs with layout-analyzed pages"];
         case "ocr": return [(d) => pdf(d) && d.ocrPages > 0, "PDFs with OCR'd pages"];
         case "suspect": return [(d) => pdf(d) && d.suspectPages > 0, "PDFs with pages that look like poor old OCR"];
+        case "problems": return [(d) => pdf(d) && d.issuePages > 0, "PDFs with pages that had OCR problems"];
+        case "claude": return [(d) => pdf(d) && d.claudePages > 0, "PDFs with pages checked by Claude"];
       }
   }
   return [() => true, `unknown filter "${filter}"`];
@@ -189,6 +208,15 @@ function updateFilterBanner() {
 $("clearFilter").addEventListener("click", () => {
   drillFilter = null;
   history.replaceState(null, "", location.pathname);
+  saveFilters();
+  renderDocs();
+});
+
+$("resetFilters").addEventListener("click", () => {
+  drillFilter = null;
+  $("filterCollection").value = "";
+  $("filterName").value = "";
+  saveFilters();
   renderDocs();
 });
 
@@ -301,8 +329,8 @@ $("docs").addEventListener("click", async (e) => {
     refresh();
   }
 });
-$("filterCollection").addEventListener("change", renderDocs);
-$("filterName").addEventListener("input", renderDocs);
+$("filterCollection").addEventListener("change", () => { saveFilters(); renderDocs(); });
+$("filterName").addEventListener("input", () => { saveFilters(); renderDocs(); });
 
 // Row selection (PDFs only) for batch processing.
 $("docs").addEventListener("change", (e) => {
@@ -431,11 +459,12 @@ async function openReindexDialog(id) {
   $("reindexOcrLabel").textContent = `Replace text with local OCR (${ocrStatus.model || "OCR model"})`;
   const suspectTotal = d.emptyPages + d.suspectPages;
   $("ocrScope").innerHTML = [
+    `<option value="problems" ${d.issuePages ? "" : "disabled"}>Pages with problems in the last run (${d.issuePages ?? 0})</option>`,
     `<option value="missing" ${d.emptyPages ? "" : "disabled"}>Pages without text (${d.emptyPages})</option>`,
     `<option value="suspect" ${suspectTotal ? "" : "disabled"}>Pages without text or that look like poor OCR (${suspectTotal})</option>`,
     `<option value="all">All pages (${d.pageCount})</option>`,
   ].join("");
-  $("ocrScope").value = d.emptyPages ? "missing" : suspectTotal ? "suspect" : "all";
+  $("ocrScope").value = d.issuePages ? "problems" : d.emptyPages ? "missing" : suspectTotal ? "suspect" : "all";
   const modelNote = hasOcr && d.ocrModel && ocrStatus.model && d.ocrModel !== ocrStatus.model
     ? ` Currently OCR'd with ${d.ocrModel}; this run uses ${ocrStatus.model}.` : "";
   $("reindexOcrHint").textContent = ocrStatus.available
@@ -467,7 +496,8 @@ async function openReindexDialog(id) {
 function updateOcrEstimate() {
   if (!reindexDoc) return;
   const scope = $("ocrScope").value;
-  const n = scope === "missing" ? reindexDoc.emptyPages
+  const n = scope === "problems" ? reindexDoc.issuePages ?? 0
+    : scope === "missing" ? reindexDoc.emptyPages
     : scope === "suspect" ? reindexDoc.emptyPages + reindexDoc.suspectPages
     : reindexDoc.pageCount;
   const mins = Math.max(1, Math.round(n * 12 / 60));
@@ -562,6 +592,7 @@ $("searchForm").addEventListener("submit", async (e) => {
   const q = $("searchQuery").value.trim();
   const params = new URLSearchParams({ q, k: $("searchK").value });
   if ($("searchCollection").value) params.set("collection", $("searchCollection").value);
+  if ($("searchMuted").checked) params.set("includeMuted", "true");
   const out = $("searchResults");
   out.innerHTML = `<p class="muted">Searching…</p>`;
   try {

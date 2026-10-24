@@ -13,6 +13,7 @@
       <a href="/" class="active">Documents</a>
       <a href="/collections.html">Collections</a>
       <a href="/stats.html">Stats</a>
+      <a href="/claudomatics.html">Claudomatics</a>
     </nav>
     <label class="agents-switch" title="When off, Claude and other agents get a note instead of search results.">
       <input type="checkbox" id="agents-enabled" role="switch" disabled>
@@ -52,6 +53,7 @@
         <input id="searchQuery" placeholder="Ask something your documents answer…" class="grow" required>
         <select id="searchCollection"><option value="">All collections</option></select>
         <input id="searchK" type="number" min="1" max="50" value="8" title="Results">
+        <label class="inline small" title="Muted collections are left out of search unless named; tick to search them too"><input type="checkbox" id="searchMuted"> include muted</label>
         <button type="submit">Search</button>
       </form>
       <div id="searchResults"></div>
@@ -62,7 +64,8 @@
         <h2>Documents <span id="docCount" class="muted"></span></h2>
         <div class="row">
           <select id="filterCollection"><option value="">All collections</option></select>
-          <input id="filterName" placeholder="Filter by name">
+          <input id="filterName" type="search" placeholder="Filter by name">
+          <button id="resetFilters" class="secondary" hidden title="Show every document: clears the collection, name and Stats filters">Reset filters</button>
           <button id="clearSort" class="secondary" hidden title="Back to the default order (collection, then name)">Clear sort</button>
           <button id="processBtn" class="secondary" title="Queue OCR and layout analysis for many PDFs, e.g. as an overnight batch">Process…</button>
         </div>

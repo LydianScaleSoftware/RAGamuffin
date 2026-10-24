@@ -13,7 +13,8 @@ public sealed record CollectionSummary(
     string? Description,
     IReadOnlyList<string> Keywords,
     IReadOnlyDictionary<string, int> Types,
-    IReadOnlyList<string> ExampleTitles);
+    IReadOnlyList<string> ExampleTitles,
+    bool Muted = false);
 
 /// <summary>
 /// Describes the library to agents within a token budget: the MCP server instructions (added to the agent's system
@@ -74,7 +75,8 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, 
                     c.Description,
                     c.Keywords,
                     mine.GroupBy(d => d.ContentType).OrderByDescending(g => g.Count()).ToDictionary(g => g.Key, g => g.Count()),
-                    mine.OrderByDescending(d => d.ChunkCount).Select(d => Path.GetFileNameWithoutExtension(d.Name.Split('/').Last())).Take(10).ToList());
+                    mine.OrderByDescending(d => d.ChunkCount).Select(d => Path.GetFileNameWithoutExtension(d.Name.Split('/').Last())).Take(10).ToList(),
+                    c.Muted);
             })
             .Where(s => s.Documents > 0)
             .OrderByDescending(s => s.Documents)
@@ -101,9 +103,11 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, 
             "result in full, get_document with pages=/lines=/section= to read around it. Cite document and page or lines.\n" +
             "Adding (when the user asks): import_file adds a file as is; for a PDF, list_pages finds pages to check, get_page shows the " +
             "page image with its current text, set_page_text saves your corrected text. To convert a manual, write it as Markdown, then " +
-            "add_document with your own chunks (line ranges, each one coherent unit — a section, table, listing with its explanation, " +
+            "add_document with your own chunks, called Claudomatics (line ranges, each one coherent unit — a section, table, listing with its explanation, " +
             "or whole function — with a title and a search-friendly summary) and source_document= the PDF.\n" +
-            "Pass `collection` when one clearly fits; list_collections describes each.";
+            "Pass `collection` when one clearly fits; list_collections describes each. Collections marked MUTED (the user's choice, " +
+            "e.g. docs for another version) are left out of search unless you name them in `collection`/`collections`: do that " +
+            "when the user asks for them, or when nothing else answers and they might.";
         if (collections.Count == 0)
             return "RAGamuffin searches the user's own document library, which is empty right now.";
         return Fit(header, "Collections:", collections, budgetTokens, InstructionLevels, FormatInstructionLine);
@@ -157,7 +161,7 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, 
 
     static string FormatInstructionLine(CollectionSummary c, Detail d)
     {
-        var sb = new StringBuilder($"- {c.Name} ({c.Documents:N0} docs)");
+        var sb = new StringBuilder($"- {c.Name} ({c.Documents:N0} docs{(c.Muted ? ", MUTED: searched only when named" : "")})");
         var description = Shorten(c.Description, d.DescriptionChars);
         if (description is not null) sb.Append(": ").Append(description);
         if (d.Keywords > 0 && c.Keywords.Count > 0)
@@ -168,7 +172,7 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, 
     static string FormatListEntry(CollectionSummary c, Detail d)
     {
         var types = string.Join(", ", c.Types.Select(t => $"{t.Value} {t.Key}"));
-        var sb = new StringBuilder($"## {c.Name}\n{c.Documents:N0} documents ({types})");
+        var sb = new StringBuilder($"## {c.Name}{(c.Muted ? " (MUTED: left out of search unless named in `collection`/`collections`)" : "")}\n{c.Documents:N0} documents ({types})");
         if (c.PdfPages > 0) sb.Append($", {c.PdfPages:N0} PDF pages");
         sb.Append('\n');
         var description = Shorten(c.Description, d.DescriptionChars);

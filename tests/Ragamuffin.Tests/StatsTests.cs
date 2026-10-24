@@ -42,18 +42,21 @@ public class StatsTests
     {
         var group = new StatsGroup("c", false, Documents: 4, Pages: 20, Chunks: 10, SizeBytes: 0, Characters: 12_000,
             Types: [], Languages: [], Origins: [], PdfPages: Mix(embedded: 6, layout: 8, blank: 6), Statuses: [],
-            SuspectPages: 0, DocumentsWithNotices: 0, AddedLast7Days: 0, LastUpdated: null);
+            SuspectPages: 0, ProblemPages: 0, Claudomatics: 2, ClaudomaticChars: 5_000, EncodedDocuments: 0, HiddenChunks: 0,
+            DocumentsWithNotices: 0, AddedLast7Days: 0, LastUpdated: null);
         Assert.Equal(2.5, group.AvgChunksPerDocument);
         Assert.Equal(1200, group.AvgChunkChars);
         Assert.Equal(6, group.PagesNeedingOcr);
         Assert.Equal(6, group.PagesWithoutLayout);
+        Assert.Equal(2500, group.AvgClaudomaticChars);
     }
 
     [Fact]
     public void Empty_group_has_zero_averages()
     {
-        var group = new StatsGroup("c", false, 0, 0, 0, 0, 0, [], [], [], PageMix.Empty, [], 0, 0, 0, null);
+        var group = new StatsGroup("c", false, 0, 0, 0, 0, 0, [], [], [], PageMix.Empty, [], 0, 0, 0, 0, 0, 0, 0, 0, null);
         Assert.Equal(0, group.AvgChunksPerDocument);
         Assert.Equal(0, group.AvgChunkChars);
+        Assert.Equal(0, group.AvgClaudomaticChars);
     }
 }

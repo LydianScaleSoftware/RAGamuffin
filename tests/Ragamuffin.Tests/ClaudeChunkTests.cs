@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Ragamuffin.Data;
 using Ragamuffin.Ingestion;
 using Ragamuffin.Mcp;
+using Ragamuffin.Collections;
 
 namespace Ragamuffin.Tests;
 
@@ -167,6 +168,39 @@ public class PageReviewTests
     }
 }
 
+public class PageIssueTests
+{
+    static DocumentPage Page(int n, string source = PageSource.Ocr, string? issue = null) =>
+        new() { Page = n, Source = source, OcrText = "Plenty of OCR text on this page here.", ClaudeText = "Plenty of text Claude checked.", Issue = issue };
+
+    [Fact]
+    public void A_page_with_a_recorded_problem_needs_review_until_claude_checks_it()
+    {
+        Assert.True(PageTools.NeedsReview(Page(1, PageSource.Layout, "Layout analysis failed")));
+        Assert.True(PdfPages.HasIssue(Page(1, issue: "glm-ocr failed on 2 regions")));
+        Assert.False(PdfPages.HasIssue(Page(1, PageSource.Claude, "glm-ocr failed on 2 regions")));
+        Assert.False(PageTools.NeedsReview(Page(1, PageSource.Claude, "glm-ocr failed on 2 regions")));
+    }
+
+    [Fact]
+    public void The_problems_scope_re_runs_only_unchecked_problem_pages()
+    {
+        var pages = new[] { Page(1), Page(2, issue: "x"), Page(3, PageSource.Claude, "x"), Page(4, issue: "y") };
+        Assert.Equal([2, 4], PdfPages.SelectForOcr(pages, OcrScope.Problems));
+        Assert.Equal(OcrScope.Problems, OcrScopes.Parse("problems"));
+        Assert.Equal("problems", OcrScopes.Name(OcrScope.Problems));
+    }
+
+    [Fact]
+    public void The_notice_is_rebuilt_from_page_problems()
+    {
+        Assert.Null(IngestWorker.IssueNotice([Page(1), Page(2, PageSource.Claude, "x")]));
+        var notice = IngestWorker.IssueNotice([Page(1), Page(11, issue: "x"), Page(25, issue: "y")]);
+        Assert.StartsWith("2 pages had OCR or layout problems (11, 25).", notice);
+        Assert.Contains("list_pages(which=\"problems\")", notice);
+    }
+}
+
 public class LocalFilesTests
 {
     [Fact]
@@ -192,5 +226,81 @@ public class LocalFilesTests
             Directory.Delete(root, recursive: true);
             File.Delete(outside);
         }
+    }
+}
+
+public class HexDumpTests
+{
+    [Fact]
+    public void Formats_offset_hex_and_ascii_like_xxd()
+    {
+        byte[] bytes = [0xa9, 0x00, 0x8d, 0x30, 0xc0, 0xa2, 0xff, 0x9a, 0x20, 0x58, 0xfc, 0x4c, 0x00, 0x08, 0x00, 0x00, (byte)'H', (byte)'E', (byte)'L', (byte)'L', (byte)'O'];
+        var lines = HexDump.Format(bytes).Split('\n');
+        Assert.Equal("00000000: a9 00 8d 30 c0 a2 ff 9a  20 58 fc 4c 00 08 00 00  |...0.... X.L....|", lines[0]);
+        Assert.StartsWith("00000010: 48 45 4c 4c 4f ", lines[1]);
+        Assert.EndsWith("|HELLO|", lines[1]);
+        // A short last line keeps the ASCII column aligned with full lines.
+        Assert.Equal(lines[0].IndexOf('|'), lines[1].IndexOf('|'));
+        Assert.Equal(2, lines.Length);
+    }
+
+    [Fact]
+    public void Every_line_has_the_same_layout_so_line_numbers_map_to_offsets()
+    {
+        var bytes = Enumerable.Range(0, 1000).Select(i => (byte)i).ToArray();
+        var lines = HexDump.Format(bytes).Split('\n');
+        Assert.Equal(63, lines.Length);
+        Assert.StartsWith("000003e0:", lines[62]);
+        Assert.Equal(0x3e0, HexDump.OffsetOfLine(63));
+    }
+
+    [Fact]
+    public void Empty_file_is_empty_text()
+    {
+        Assert.Equal("", HexDump.Format([]));
+    }
+}
+
+public class MutedCollectionTests
+{
+    static CollectionSummary C(string name, bool muted = false) =>
+        new(name, 10, 0, null, [], new Dictionary<string, int> { ["pdf"] = 10 }, [], muted);
+
+    [Fact]
+    public void Instructions_keep_muted_collections_but_say_they_are_searched_only_when_named()
+    {
+        var text = LibraryGuide.BuildInstructions([C("System 6 Docs"), C("System 5 Docs", muted: true)], 2000);
+        Assert.Contains("- System 6 Docs (10 docs)", text);
+        Assert.Contains("- System 5 Docs (10 docs, MUTED: searched only when named)", text);
+        Assert.Contains("left out of search unless you name them", text);
+    }
+
+    [Fact]
+    public void List_collections_marks_muted_ones()
+    {
+        var text = LibraryGuide.BuildList([C("System 5 Docs", muted: true)], 2000, titles: 0);
+        Assert.StartsWith("## System 5 Docs (MUTED: left out of search unless named", text);
+    }
+
+    [Fact]
+    public void A_named_collection_scope_is_explicit()
+    {
+        Assert.Equal(["System 5 Docs"], Ragamuffin.Search.SearchScope.For(" System 5 Docs ").Collections);
+        Assert.Same(Ragamuffin.Search.SearchScope.Default, Ragamuffin.Search.SearchScope.For(null));
+    }
+}
+
+public class StatsClaudeTests
+{
+    [Fact]
+    public void Pages_claude_checked_count_toward_the_total_and_the_origin()
+    {
+        var all = new Ragamuffin.Stats.PageMix(0, 0, 0, 0, 0, Claude: 12);
+        Assert.Equal(12, all.Total);
+        Assert.Equal(Ragamuffin.Stats.TextOrigin.PdfClaude, Ragamuffin.Stats.StatsService.Classify("pdf", all));
+        Assert.Equal(Ragamuffin.Stats.TextOrigin.PdfMixed, Ragamuffin.Stats.StatsService.Classify("pdf", new(10, 0, 0, 0, 0, Claude: 2)));
+        Assert.Equal(Ragamuffin.Stats.TextOrigin.PdfMixed, Ragamuffin.Stats.StatsService.Classify("pdf", new(0, 0, 5, 0, 0, Claude: 2)));
+        Assert.Equal(Ragamuffin.Stats.TextOrigin.PdfOcr, Ragamuffin.Stats.StatsService.Classify("pdf", new(0, 0, 5, 0, 3)));
+        Assert.Equal(Ragamuffin.Stats.TextOrigin.PdfNoText, Ragamuffin.Stats.StatsService.Classify("pdf", new(0, 0, 0, 0, 3)));
     }
 }

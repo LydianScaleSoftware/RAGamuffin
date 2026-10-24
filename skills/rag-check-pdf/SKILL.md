@@ -13,8 +13,13 @@ text the library uses matches the page, and save corrections. The library re-ind
 
 - If the user gave a file path and the PDF isn't in the library yet, add it: `import_file(path, collection)`.
   Wait for indexing (about a minute for a few hundred pages; `list_pages` reports "no pages" until then).
-- `list_pages(document)` lists the pages that need review: no usable text, embedded text that looks garbled, or
-  pages only glm-ocr has read. `list_pages(document, which="all")` lists every page.
+- `list_documents` and `get_document` show a document's **notice** when its last OCR run had trouble (e.g. "4 pages
+  had OCR or layout problems"). Those pages are the most likely to be wrong: start with
+  `list_pages(document, which="problems")`, which lists each one with what went wrong (glm-ocr failed on some
+  regions and a rougher reading was used, no text found, layout analysis failed).
+- `list_pages(document)` lists every page that needs review, problem pages first: recorded problems, no usable text,
+  embedded text that looks garbled, or pages only glm-ocr has read. `list_pages(document, which="all")` lists every
+  page.
 - Tell the user how many pages need review before starting a big job. Each page image costs roughly 1,500 tokens,
   so a few hundred pages is a long session; offer to do a range (`pages="1-50"`) or only the flagged pages.
 

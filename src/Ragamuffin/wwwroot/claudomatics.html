@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claudomatics · RAGamuffin</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>RAGamuffin</h1>
+    <nav>
+      <a href="/">Documents</a>
+      <a href="/collections.html">Collections</a>
+      <a href="/stats.html">Stats</a>
+      <a href="/claudomatics.html" class="active">Claudomatics</a>
+    </nav>
+    <label class="agents-switch" title="When off, Claude and other agents get a note instead of search results.">
+      <input type="checkbox" id="agents-enabled" role="switch" disabled>
+      <span class="track"><span class="thumb"></span></span>
+      <span id="agents-label">Agents read</span>
+    </label>
+    <label class="agents-switch" title="When off, agents can search and read but can't add documents, save page text, re-chunk or delete.">
+      <input type="checkbox" id="agents-writes" role="switch" disabled>
+      <span class="track"><span class="thumb"></span></span>
+      <span id="agents-writes-label">Agents write</span>
+    </label>
+    <span id="health" class="pill">checking…</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="row spread">
+        <div>
+          <h2>Claudomatics</h2>
+          <p class="hint">Chunks Claude chose (<em>Claude + automatic</em>): each one a whole section, table, listing, reference entry or function,
+            with Claude's title and summary. Added with <code>add_document</code> or re-chunked with <code>set_chunks</code>; grouped by the
+            day they were written and the document they belong to.</p>
+        </div>
+      </div>
+      <div class="row toolbar">
+        <input id="filter" class="grow" type="search" placeholder="Filter by title, summary, symbol, text or document…">
+        <select id="collection"><option value="">All collections</option></select>
+        <span id="count" class="muted small"></span>
+        <button id="expandAll" class="secondary small">Expand all</button>
+        <button id="collapseAll" class="secondary small">Collapse all</button>
+      </div>
+      <div id="groups"><p class="muted">Loading…</p></div>
+    </section>
+  </main>
+
+  <dialog id="chunkDialog" class="wide">
+    <div class="row spread">
+      <h2 id="chunkHeading"></h2>
+      <button id="chunkClose" class="secondary">Close</button>
+    </div>
+    <div id="chunkMeta" class="muted small"></div>
+    <div class="claudo-panes">
+      <div class="claudo-text">
+        <label>Title <input id="chunkTitle" maxlength="300"></label>
+        <label>Summary <textarea id="chunkSummary" rows="3" maxlength="2000"></textarea></label>
+        <div class="row">
+          <button id="chunkSave">Save title and summary</button>
+          <button id="chunkDelete" class="secondary danger">Delete this Claudomatic</button>
+          <button id="chunkPageBtn" class="secondary" hidden>Show source page</button>
+          <span id="chunkMessage" class="muted small"></span>
+        </div>
+        <pre id="chunkContent"></pre>
+      </div>
+      <div id="pagePane" class="claudo-page" hidden>
+        <div class="row spread">
+          <strong id="pageLabel"></strong>
+          <span class="row"><button id="pagePrev" class="secondary small">◀</button><button id="pageNext" class="secondary small">▶</button></span>
+        </div>
+        <img id="pageImage" alt="Source page">
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="deleteDialog">
+    <h2>Delete <span id="deleteName"></span>?</h2>
+    <p>This removes the document, its stored file and <strong id="deleteTotal"></strong>:</p>
+    <ul id="deleteDays"></ul>
+    <p id="deleteWarning" class="message bad" hidden></p>
+    <p class="hint">Export the document first if you want to keep its text. This can't be undone.</p>
+    <div class="row end">
+      <button id="deleteCancel" class="secondary">Cancel</button>
+      <button id="deleteConfirm" class="danger-solid"></button>
+    </div>
+  </dialog>
+
+  <script src="common.js"></script>
+  <script src="claudomatics.js"></script>
+</body>
+</html>

@@ -114,6 +114,7 @@ app.UseStaticFiles(new StaticFileOptions
 });
 app.MapRagApi();
 app.MapOcrApi();
+app.MapClaudomaticApi();
 app.MapMcp("/mcp");
 
 app.Run();

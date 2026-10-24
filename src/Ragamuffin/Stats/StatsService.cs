@@ -14,20 +14,25 @@ public enum TextOrigin
     PdfEmbeddedLayout,
     /// <summary>PDF whose text all comes from local OCR.</summary>
     PdfOcr,
-    /// <summary>PDF with some pages from embedded text and some from OCR.</summary>
+    /// <summary>PDF whose text all comes from Claude (checked or transcribed from the page images).</summary>
+    PdfClaude,
+    /// <summary>PDF mixing text sources: embedded, OCR and/or Claude.</summary>
     PdfMixed,
     /// <summary>PDF with no usable text yet (needs OCR, or not analyzed).</summary>
     PdfNoText,
+    /// <summary>A binary file stored as a hex dump (Claude added it).</summary>
+    EncodedBinary,
 }
 
 /// <summary>Per-document page counts by text source, for a PDF.</summary>
-public sealed record PageMix(int Embedded, int Layout, int OcrWithLayout, int OcrWholePage, int Blank)
+public sealed record PageMix(int Embedded, int Layout, int OcrWithLayout, int OcrWholePage, int Blank, int Claude = 0)
 {
     public int Ocr => OcrWithLayout + OcrWholePage;
-    public int Total => Embedded + Layout + Ocr + Blank;
+    public int Total => Embedded + Layout + Ocr + Claude + Blank;
 
     public static PageMix operator +(PageMix a, PageMix b) =>
-        new(a.Embedded + b.Embedded, a.Layout + b.Layout, a.OcrWithLayout + b.OcrWithLayout, a.OcrWholePage + b.OcrWholePage, a.Blank + b.Blank);
+        new(a.Embedded + b.Embedded, a.Layout + b.Layout, a.OcrWithLayout + b.OcrWithLayout, a.OcrWholePage + b.OcrWholePage,
+            a.Blank + b.Blank, a.Claude + b.Claude);
 
     public static readonly PageMix Empty = new(0, 0, 0, 0, 0);
 }
@@ -46,12 +51,18 @@ public sealed record StatsGroup(
     PageMix PdfPages,
     Dictionary<string, int> Statuses,
     int SuspectPages,
+    int ProblemPages,
+    int Claudomatics,
+    long ClaudomaticChars,
+    int EncodedDocuments,
+    int HiddenChunks,
     int DocumentsWithNotices,
     int AddedLast7Days,
     DateTimeOffset? LastUpdated)
 {
     public double AvgChunksPerDocument => Documents == 0 ? 0 : Math.Round(Chunks / (double)Documents, 1);
     public int AvgChunkChars => Chunks == 0 ? 0 : (int)(Characters / Chunks);
+    public int AvgClaudomaticChars => Claudomatics == 0 ? 0 : (int)(ClaudomaticChars / Claudomatics);
 
     /// <summary>PDF pages with no usable text: what an OCR run would cover.</summary>
     public int PagesNeedingOcr => PdfPages.Blank;
@@ -74,18 +85,30 @@ public sealed record StatsReport(
 public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.IOptions<RagOptions> options)
 {
     sealed record DocRow(Guid Id, string Name, string Collection, string ContentType, string? Language, string Status, string? Error,
-        int PageCount, int EmptyPages, int SuspectPages, int ChunkCount, long SizeBytes, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+        int PageCount, int EmptyPages, int SuspectPages, int IssuePages, int ChunkCount, long SizeBytes, DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt, string ChunkSource, string? Encoding);
+
+    /// <summary>Per-document figures from the chunks table.</summary>
+    sealed record ChunkFacts(long Chars, int Hidden);
 
     public async Task<StatsReport> BuildAsync(CancellationToken ct)
     {
         var docs = await db.Documents.AsNoTracking()
             .Select(d => new DocRow(d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.Status, d.Error,
-                d.PageCount, d.EmptyPages, d.SuspectPages, d.ChunkCount, d.SizeBytes, d.CreatedAt, d.UpdatedAt))
+                d.PageCount, d.EmptyPages, d.SuspectPages, d.IssuePages, d.ChunkCount, d.SizeBytes, d.CreatedAt, d.UpdatedAt,
+                d.ChunkSource, d.Encoding))
             .ToListAsync(ct);
-        var characters = await db.Chunks.AsNoTracking()
-            .GroupBy(c => c.DocumentId)
-            .Select(g => new { Id = g.Key, Chars = g.Sum(c => (long)c.Content.Length) })
-            .ToDictionaryAsync(x => x.Id, x => x.Chars, ct);
+        // Characters per document, and how many of its chunks search leaves out because a conversion covers their pages
+        // (the same rule as SearchService).
+        var characters = (await db.Database.SqlQuery<ChunkFactRow>($"""
+            select c.document_id as "Id", sum(length(c.content))::bigint as "Chars",
+                   count(*) filter (where exists (
+                       select 1 from documents o where o.source_document_id = c.document_id and o.status = {DocumentStatus.Ready}
+                       and (not exists (select 1 from chunks k where k.document_id = o.id and k.page is not null)
+                            or exists (select 1 from chunks k where k.document_id = o.id
+                                       and c.page between k.page and coalesce(k.page_end, k.page)))))::int as "Hidden"
+            from chunks c group by c.document_id
+            """).ToListAsync(ct)).ToDictionary(r => r.Id, r => new ChunkFacts(r.Chars, r.Hidden));
 
         var mixes = await PageMixesAsync(db, ct);
 
@@ -137,11 +160,14 @@ public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.I
                 Layout: Count(PageSource.Layout),
                 OcrWithLayout: Count(PageSource.Ocr, layout: true),
                 OcrWholePage: Count(PageSource.Ocr, layout: false),
-                Blank: blank);
+                Blank: blank,
+                Claude: Count(PageSource.Claude));
         });
     }
 
-    static StatsGroup Summarize(string name, bool isDefault, List<DocRow> docs, Dictionary<Guid, PageMix> mixes, Dictionary<Guid, long> characters)
+    public sealed record ChunkFactRow(Guid Id, long Chars, int Hidden);
+
+    static StatsGroup Summarize(string name, bool isDefault, List<DocRow> docs, Dictionary<Guid, PageMix> mixes, Dictionary<Guid, ChunkFacts> facts)
     {
         var pdfMix = docs.Where(d => d.ContentType == "pdf")
             .Select(d => mixes.GetValueOrDefault(d.Id) ?? UnanalyzedPdf(d))
@@ -154,13 +180,18 @@ public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.I
             Pages: docs.Where(d => d.ContentType == "pdf").Sum(d => Math.Max(d.PageCount, (mixes.GetValueOrDefault(d.Id) ?? PageMix.Empty).Total)),
             Chunks: docs.Sum(d => d.ChunkCount),
             SizeBytes: docs.Sum(d => d.SizeBytes),
-            Characters: docs.Sum(d => characters.GetValueOrDefault(d.Id)),
+            Characters: docs.Sum(d => facts.GetValueOrDefault(d.Id)?.Chars ?? 0),
             Types: Count(docs.Select(d => d.ContentType)),
             Languages: Count(docs.Where(d => d.ContentType == "code").Select(d => d.Language ?? "other")),
-            Origins: Count(docs.Select(d => Classify(d.ContentType, mixes.GetValueOrDefault(d.Id)).ToString())),
+            Origins: Count(docs.Select(d => (d.Encoding is not null ? TextOrigin.EncodedBinary : Classify(d.ContentType, mixes.GetValueOrDefault(d.Id))).ToString())),
             PdfPages: pdfMix,
             Statuses: Count(docs.Select(d => d.Status)),
             SuspectPages: docs.Sum(d => d.SuspectPages),
+            ProblemPages: docs.Sum(d => d.IssuePages),
+            Claudomatics: docs.Where(d => d.ChunkSource == ChunkSources.Claude).Sum(d => d.ChunkCount),
+            ClaudomaticChars: docs.Where(d => d.ChunkSource == ChunkSources.Claude).Sum(d => facts.GetValueOrDefault(d.Id)?.Chars ?? 0),
+            EncodedDocuments: docs.Count(d => d.Encoding is not null),
+            HiddenChunks: docs.Sum(d => facts.GetValueOrDefault(d.Id)?.Hidden ?? 0),
             DocumentsWithNotices: docs.Count(d => d.Status != DocumentStatus.Failed && d.Status != DocumentStatus.NeedsOcr && d.Error != null),
             AddedLast7Days: docs.Count(d => d.CreatedAt >= DateTimeOffset.UtcNow.AddDays(-7)),
             LastUpdated: docs.Count == 0 ? null : docs.Max(d => d.UpdatedAt));
@@ -178,12 +209,11 @@ public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.I
         if (contentType != "pdf") return TextOrigin.OriginalText;
         if (pages is null) return TextOrigin.PdfNoText;
         var own = pages.Embedded + pages.Layout;
-        return (own, pages.Ocr) switch
-        {
-            (0, 0) => TextOrigin.PdfNoText,
-            (0, _) => TextOrigin.PdfOcr,
-            (_, > 0) => TextOrigin.PdfMixed,
-            _ => pages.Layout > 0 ? TextOrigin.PdfEmbeddedLayout : TextOrigin.PdfEmbedded,
-        };
+        var sources = new[] { own, pages.Ocr, pages.Claude }.Count(n => n > 0);
+        if (sources == 0) return TextOrigin.PdfNoText;
+        if (sources > 1) return TextOrigin.PdfMixed;
+        if (pages.Claude > 0) return TextOrigin.PdfClaude;
+        if (pages.Ocr > 0) return TextOrigin.PdfOcr;
+        return pages.Layout > 0 ? TextOrigin.PdfEmbeddedLayout : TextOrigin.PdfEmbedded;
     }
 }

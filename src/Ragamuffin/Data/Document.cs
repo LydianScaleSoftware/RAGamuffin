@@ -13,12 +13,22 @@ public static class DocumentStatus
     public const string Ocr = "ocr";
 }
 
+public static class Encodings
+{
+    /// <summary>A hex dump: offset, 16 bytes in hex, and their printable ASCII, per line (like xxd).</summary>
+    public const string Hex = "hex";
+}
+
+/// <summary>
+/// Who chose a document's chunk boundaries. Chunks Claude chooses are called Claudomatics (Claude + automatic) in the
+/// UI and docs.
+/// </summary>
 public static class ChunkSources
 {
     /// <summary>The server's chunker cut the text.</summary>
     public const string Auto = "auto";
 
-    /// <summary>Claude chose the chunk boundaries (add_document / set_chunks); re-indexing keeps them.</summary>
+    /// <summary>Claude chose the chunk boundaries (add_document / set_chunks): Claudomatics. Re-indexing keeps them.</summary>
     public const string Claude = "claude";
 }
 
@@ -44,6 +54,9 @@ public sealed class Document
     public int OcrPages { get; set; }
     public int EmptyPages { get; set; }
     public int SuspectPages { get; set; }
+
+    /// <summary>Pages with an OCR or layout <see cref="DocumentPage.Issue"/> that Claude hasn't checked yet.</summary>
+    public int IssuePages { get; set; }
 
     /// <summary>Pages whose text was arranged by layout analysis (either OCR'd by region or embedded words placed by region).</summary>
     public int LayoutPages { get; set; }
@@ -71,6 +84,12 @@ public sealed class Document
     /// ready, the source's own chunks are left out of search so results aren't duplicated.
     /// </summary>
     public Guid? SourceDocumentId { get; set; }
+
+    /// <summary>
+    /// How a binary file was turned into text for the index: <see cref="Encodings.Hex"/>, or null for documents that
+    /// are text already. The original bytes stay in the file store.
+    /// </summary>
+    public string? Encoding { get; set; }
 
     /// <summary>Full extracted text, filled in once ingestion succeeds.</summary>
     public string? Text { get; set; }

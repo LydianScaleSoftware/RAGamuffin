@@ -5,7 +5,9 @@ description: Convert a PDF (usually a manual) into clean Markdown and index it i
 
 # Convert a PDF to Markdown and index it in RAGamuffin
 
-The result is a Markdown file on disk plus a RAGamuffin document made from it, linked to the original PDF. The
+The result is a Markdown file on disk plus a RAGamuffin document made from it, linked to the original PDF, whose
+chunks you choose: **Claudomatics** (Claude + automatic). The user can browse, edit and export them on the web UI's
+Claudomatics page. The
 PDF's own chunks for the pages you convert drop out of search; the PDF stays in the library for page images.
 
 ## 1. Plan
@@ -41,7 +43,7 @@ Append each batch to the chapter's `.md` file as you go, so nothing is lost if t
 If you corrected a page's text substantially, you may also save it to the PDF with `set_page_text` (optional;
 ask the user if they want the PDF's own pages fixed too).
 
-## 3. Choose the chunks
+## 3. Choose the chunks (the Claudomatics)
 
 Read the finished file with line numbers (the Read tool shows them) and divide it into chunks. A chunk is one
 coherent unit someone would want as a single search result:

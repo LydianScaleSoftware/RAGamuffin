@@ -44,6 +44,7 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
             e.HasMany(d => d.Pages).WithOne().HasForeignKey(p => p.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.Property(d => d.ChunkSource).HasMaxLength(20).HasDefaultValue(ChunkSources.Auto);
+            e.Property(d => d.Encoding).HasMaxLength(20);
             // Deleting the PDF leaves its Markdown conversion in place, unlinked.
             e.HasOne<Document>().WithMany().HasForeignKey(d => d.SourceDocumentId).OnDelete(DeleteBehavior.SetNull);
         });
@@ -55,6 +56,7 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
             e.Ignore(p => p.EffectiveText);
             e.Ignore(p => p.EmbeddedSource);
             e.Property(p => p.LayoutJson).HasColumnType("jsonb");
+            e.Property(p => p.Issue).HasMaxLength(500);
         });
 
         model.Entity<Chunk>(e =>
@@ -62,6 +64,7 @@ public sealed class RagDbContext(DbContextOptions<RagDbContext> options) : DbCon
             e.ToTable("chunks");
             e.Property(c => c.Embedding).HasColumnType($"vector({EmbeddingDimensions})");
             e.Property(c => c.Kind).HasMaxLength(40);
+            e.Property(c => c.CreatedAt).HasDefaultValueSql("now()");
             e.Property(c => c.Symbol).HasMaxLength(300);
             e.Property(c => c.Title).HasMaxLength(300);
             e.HasGeneratedTsVectorColumn(c => c.Tsv, "english", c => new { c.Title, c.Symbol, c.HeadingPath, c.Summary, c.Content })

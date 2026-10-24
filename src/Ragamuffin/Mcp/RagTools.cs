@@ -22,14 +22,28 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
     public async Task<string> SearchDocuments(
         [Description("Question or keywords; exact identifiers (DrawCString, $A604) work.")] string query,
         [Description("Number of results (default 8, max 25).")] int? top_k = null,
-        [Description("Limit to one collection.")] string? collection = null,
+        [Description("Search only this collection (muted or not).")] string? collection = null,
+        [Description("Search only these collections, e.g. [\"System 6 Docs\"]. Naming a muted collection searches it.")] List<string>? collections = null,
+        [Description("Leave these collections out of this search.")] List<string>? exclude = null,
         CancellationToken ct = default)
     {
         var wanted = Math.Clamp(top_k ?? Mcp.DefaultResults, 1, 25);
+        var named = (collections ?? []).Concat(string.IsNullOrWhiteSpace(collection) ? [] : [collection]).ToList();
+        var scope = await search.ResolveAsync(new SearchScope(named.Count > 0 ? named : null, exclude), ct);
+        if (scope.Unknown.Count > 0)
+        {
+            var names = await db.Collections.AsNoTracking().OrderBy(c => c.Name).Select(c => c.Name).ToListAsync(ct);
+            return $"No collection named {string.Join(", ", scope.Unknown.Select(n => $"\"{n}\""))}. Collections: {string.Join(", ", names)}.";
+        }
+        if (scope.Searched.Count == 0)
+            return "Nothing to search: every collection is excluded" + (scope.MutedSkipped.Count > 0 ? $" or muted ({string.Join(", ", scope.MutedSkipped)})" : "") + ".";
         // Fetch extra candidates: merging neighbours and dropping duplicates can shrink the list.
-        var hits = await search.SearchAsync(query, Math.Min(50, wanted * 4), collection, ct);
+        var hits = await search.SearchAsync(query, Math.Min(50, wanted * 4), new SearchScope(scope.Searched), ct);
         var passages = LeanText.Dedupe(LeanText.Merge(hits), query).Take(wanted).ToList();
-        return LeanText.FormatSearch(query, passages, Mcp.SearchTokens);
+        var result = LeanText.FormatSearch(query, passages, Mcp.SearchTokens);
+        return scope.MutedSkipped.Count == 0 ? result :
+            $"Muted collections were not searched: {string.Join(", ", scope.MutedSkipped)}. Name one in `collections` to search it " +
+            "(e.g. if the answer isn't here, or the user asked for that version).\n\n" + result;
     }
 
     [McpServerTool(Name = "get_document", ReadOnly = true)]
@@ -64,7 +78,7 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
                 .Select(c => new
                 {
                     c.Id, c.DocumentId, c.Ordinal, c.Content, c.HeadingPath, c.Title, c.Summary, c.Kind, c.Symbol,
-                    c.StartLine, c.EndLine, c.Page, c.PageEnd, c.Ocr, c.Document.Name, c.Document.Collection,
+                    c.StartLine, c.EndLine, c.Page, c.PageEnd, c.Ocr, c.Document.Name, c.Document.Collection, c.Document.Encoding,
                 })
                 .ToListAsync(ct))
             .Where(c => wanted.Contains((c.DocumentId, c.Ordinal)))
@@ -77,7 +91,7 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         {
             var p = new Passage(c.Name, c.Collection, c.HeadingPath, c.StartLine, c.EndLine, c.Page, c.PageEnd, c.Ocr, c.Content, [])
             {
-                ChunkIds = [c.Id], Title = c.Title, Summary = c.Summary, Kind = c.Kind, Symbol = c.Symbol,
+                ChunkIds = [c.Id], Title = c.Title, Summary = c.Summary, Kind = c.Kind, Symbol = c.Symbol, Encoding = c.Encoding,
             };
             var block = $"[{LeanText.Citation(p)}]{(ids.Contains(c.Id) ? "" : " (neighbour)")}\n" +
                         (c.Summary is null ? "" : $"Summary: {c.Summary}\n") + c.Content + "\n\n";
@@ -95,7 +109,7 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
     }
 
     [McpServerTool(Name = "list_documents", ReadOnly = true)]
-    [Description("Find documents by name; returns names, types, sizes, chunk counts and conversions.")]
+    [Description("Find documents by name; returns names, types, sizes, chunk counts, conversions and any notice (e.g. pages with OCR problems).")]
     public async Task<string> ListDocuments(
         [Description("Part of a document name, e.g. \"toolbox\".")] string? filter = null,
         [Description("Limit to one collection.")] string? collection = null,
@@ -107,7 +121,8 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         var docs = await q.OrderBy(d => d.Collection).ThenBy(d => d.Name)
             .Select(d => new
             {
-                d.Collection, d.Name, d.ContentType, d.Language, d.PageCount, d.ChunkCount, d.Status, d.OcrPages, d.ChunkSource,
+                d.Collection, d.Name, d.ContentType, d.Language, d.PageCount, d.ChunkCount, d.Status, d.OcrPages, d.ChunkSource, d.Encoding, d.SizeBytes,
+                d.Error, d.IssuePages,
                 Source = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
                 ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).Select(o => o.Name).FirstOrDefault(),
             })
@@ -115,6 +130,7 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         if (docs.Count == 0)
             return "No documents match" + (filter is null ? "" : $" \"{filter}\"") + (collection is null ? "" : $" in {collection}") + ".";
 
+        var muted = await db.Collections.AsNoTracking().Where(c => c.Muted).Select(c => c.Name).ToListAsync(ct);
         var budget = LeanText.Chars(Mcp.ListTokens);
         var sb = new StringBuilder($"{docs.Count} document{(docs.Count == 1 ? "" : "s")}:\n");
         string? current = null;
@@ -122,12 +138,15 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
         foreach (var d in docs)
         {
             var line = new StringBuilder();
-            if (d.Collection != current) line.Append($"{d.Collection}:\n");
-            var kind = d.ContentType == "pdf" ? $"pdf, {d.PageCount} pages{(d.OcrPages > 0 ? ", OCR" : "")}" : d.Language ?? d.ContentType;
-            line.Append($"- {d.Name} ({kind}, {d.ChunkCount} chunks{(d.ChunkSource == ChunkSources.Claude ? " chosen by Claude" : "")}" +
+            if (d.Collection != current) line.Append($"{d.Collection}{(muted.Contains(d.Collection) ? " (muted: searched only when named)" : "")}:\n");
+            var kind = d.ContentType == "pdf" ? $"pdf, {d.PageCount} pages{(d.OcrPages > 0 ? ", OCR" : "")}"
+                : d.Encoding is not null ? $"⟦ENCODED BINARY · {d.Encoding} dump⟧ {d.SizeBytes:N0} bytes"
+                : d.Language ?? d.ContentType;
+            line.Append($"- {d.Name} ({kind}, {d.ChunkCount} chunks{(d.ChunkSource == ChunkSources.Claude ? ", Claudomatics" : "")}" +
                         $"{(d.Status == DocumentStatus.Ready ? "" : ", " + d.Status.Replace('_', ' '))})" +
                         (d.Source is null ? "" : $" — converted from {d.Source}") +
-                        (d.ConvertedTo is null ? "" : $" — searched through its conversion {d.ConvertedTo}") + "\n");
+                        (d.ConvertedTo is null ? "" : $" — searched through its conversion {d.ConvertedTo}") +
+                        (d.Status == DocumentStatus.Ready && d.Error is not null ? $" — NOTICE: {d.Error}" : "") + "\n");
             if (sb.Length + line.Length > budget - 90) break;
             sb.Append(line);
             current = d.Collection;

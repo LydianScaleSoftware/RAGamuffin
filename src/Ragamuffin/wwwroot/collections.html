@@ -13,6 +13,7 @@
       <a href="/">Documents</a>
       <a href="/collections.html" class="active">Collections</a>
       <a href="/stats.html">Stats</a>
+      <a href="/claudomatics.html">Claudomatics</a>
     </nav>
     <label class="agents-switch" title="When off, Claude and other agents get a note instead of search results.">
       <input type="checkbox" id="agents-enabled" role="switch" disabled>
@@ -60,7 +61,7 @@
           <thead>
             <tr>
               <th class="check"><input type="checkbox" id="selectAll" title="Select all"></th>
-              <th>Name</th><th>Description <span class="muted small">(shown to agents)</span></th><th>Keywords</th><th></th><th class="num">Documents</th><th class="num">Chunks</th><th>Created</th>
+              <th>Name</th><th>Description <span class="muted small">(shown to agents)</span></th><th>Keywords</th><th></th><th title="Muted collections are left out of search unless named explicitly">Search</th><th class="num">Documents</th><th class="num">Chunks</th><th>Created</th>
             </tr>
           </thead>
           <tbody id="cols"></tbody>

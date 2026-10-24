@@ -40,6 +40,12 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("content");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
                     b.Property<Guid>("DocumentId")
                         .HasColumnType("uuid")
                         .HasColumnName("document_id");
@@ -151,6 +157,10 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnName("keywords")
                         .HasDefaultValueSql("'{}'::text[]");
 
+                    b.Property<bool>("Muted")
+                        .HasColumnType("boolean")
+                        .HasColumnName("muted");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -205,9 +215,18 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("empty_pages");
 
+                    b.Property<string>("Encoding")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("encoding");
+
                     b.Property<string>("Error")
                         .HasColumnType("text")
                         .HasColumnName("error");
+
+                    b.Property<int>("IssuePages")
+                        .HasColumnType("integer")
+                        .HasColumnName("issue_pages");
 
                     b.Property<string>("Language")
                         .HasColumnType("text")
@@ -329,6 +348,11 @@ namespace Ragamuffin.Data.Migrations
                     b.Property<string>("EmbeddedText")
                         .HasColumnType("text")
                         .HasColumnName("embedded_text");
+
+                    b.Property<string>("Issue")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("issue");
 
                     b.Property<int?>("LayoutAngle")
                         .HasColumnType("integer")

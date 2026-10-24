@@ -22,6 +22,13 @@ function render() {
       <td><textarea class="desc" rows="2" maxlength="1000" placeholder="What this collection covers…" data-original="${esc(c.description ?? "")}">${esc(c.description ?? "")}</textarea></td>
       <td><textarea class="keywords" rows="2" placeholder="comma, separated, terms" spellcheck="false" data-original="${esc(c.keywords.join(", "))}">${esc(c.keywords.join(", "))}</textarea></td>
       <td><button class="small secondary suggest" ${c.documents ? "" : "disabled title=\"Add documents first\""}>Suggest</button></td>
+      <td><label class="agents-switch mute-switch${c.muted ? " off" : ""}" title="${c.muted
+        ? "Muted: Claude and Test search leave this collection out unless it's named explicitly. Click to search it again."
+        : "Searched normally. Click to mute it, e.g. for docs of another version that would contradict the ones you're using."}">
+        <input type="checkbox" class="mute" ${c.muted ? "" : "checked"}>
+        <span class="track"><span class="thumb"></span></span>
+        <span class="mute-label">${c.muted ? "Muted" : "On"}</span>
+      </label></td>
       <td class="num">${c.documents}</td>
       <td class="num">${c.chunks}</td>
       <td>${when(c.createdAt)}</td>
@@ -257,3 +264,23 @@ if (params.get("new") === "1") {
 
 checkHealth();
 load();
+
+// Mute or unmute straight away (not part of "Save changes"): it only changes what search covers.
+$("cols").addEventListener("change", async (e) => {
+  if (!e.target.classList.contains("mute")) return;
+  const name = e.target.closest("tr").dataset.name;
+  e.target.disabled = true;
+  try {
+    await postJson("/api/collections/mute", { name, muted: !e.target.checked });
+    const c = cols.find((x) => x.name === name);
+    if (c) c.muted = !e.target.checked;
+    const label = e.target.closest("label");
+    label.classList.toggle("off", !e.target.checked);
+    label.querySelector(".mute-label").textContent = e.target.checked ? "On" : "Muted";
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    alert(`Couldn't change ${name}: ${err.message}`);
+  } finally {
+    e.target.disabled = false;
+  }
+});

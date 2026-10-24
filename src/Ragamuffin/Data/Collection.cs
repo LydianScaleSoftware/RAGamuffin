@@ -18,4 +18,10 @@ public sealed class Collection
 
     /// <summary>Topics and terms that help an agent decide to search this collection.</summary>
     public List<string> Keywords { get; set; } = [];
+
+    /// <summary>
+    /// Left out of search unless named explicitly (e.g. an older version's manuals that would contradict the current
+    /// ones). Nothing is deleted or re-indexed; unmuting brings it straight back.
+    /// </summary>
+    public bool Muted { get; set; }
 }

@@ -146,7 +146,9 @@ public sealed class IngestWorker(
             doc.ChunkSource = ChunkSources.Auto;
         }
 
-        var extracted = TextExtractor.Extract(doc.Name, bytes);
+        var extracted = doc.Encoding == Encodings.Hex
+            ? new ExtractedDocument("binary", null, HexDump.Format(bytes), null)
+            : TextExtractor.Extract(doc.Name, bytes);
         var drafts = NewChunker().Chunk(extracted);
         if (drafts.Count == 0)
             throw new ExtractionException("No text found in document.");
@@ -262,16 +264,22 @@ public sealed class IngestWorker(
                             log.LogWarning("Layout analysis failed for page {Page} of {Name}: {Error}; using whole-page OCR", number, doc.Name, ex.Message);
                         }
                     }
+                    string? issue = null;
                     if (result is not null)
                     {
                         text = result.Text;
                         fallbackRegions += result.FallbackRegions;
+                        if (result.FallbackRegions > 0)
+                            issue = $"glm-ocr failed on {result.FallbackRegions} region{(result.FallbackRegions > 1 ? "s" : "")}; the layout service's own (rougher) reading was used for {(result.FallbackRegions > 1 ? "them" : "it")}.";
                     }
                     else
                     {
                         wholePage++;
                         text = await ocr.TranscribeAsync(ocr.RenderPage(bytes, number - 1), cancel);
+                        if (useLayout) issue = "Layout analysis failed, so the page was OCR'd as a whole (reading order and tables may be off).";
                     }
+                    if (!PdfPages.HasUsefulText(text)) issue = "OCR found no text on this page.";
+                    page.Issue = issue;
 
                     page.OcrText = text;
                     page.OcrModel = model;
@@ -287,9 +295,14 @@ public sealed class IngestWorker(
                 else
                 {
                     var result = await analyzer.ArrangeEmbeddedAsync(bytes, number - 1, cancel);
-                    if (result is null) rotatedText.Add(number);
+                    if (result is null)
+                    {
+                        rotatedText.Add(number);
+                        page.Issue = "Layout analysis skipped because the page is rotated; it keeps its plain embedded text.";
+                    }
                     else
                     {
+                        page.Issue = null;
                         page.LayoutText = result.Text;
                         page.LayoutJson = result.RegionsJson;
                         page.LayoutAngle = result.Angle;
@@ -370,7 +383,7 @@ public sealed class IngestWorker(
         {
             ApplyPageStats(d, pages);
             d.Status = drafts.Count == 0 ? DocumentStatus.NeedsOcr : DocumentStatus.Ready;
-            d.Error = notice ?? (drafts.Count == 0 ? "No embedded text. Run OCR to read the scanned pages." : null);
+            d.Error = notice ?? (drafts.Count == 0 ? "No embedded text. Run OCR to read the scanned pages." : IssueNotice(pages));
             if (drafts.Count == 0) d.Text = null;
             d.ProgressDone = d.ProgressTotal = null;
             d.OcrScope = null;
@@ -399,6 +412,19 @@ public sealed class IngestWorker(
         }
     }
 
+    /// <summary>
+    /// The document's notice rebuilt from its pages' recorded problems, so re-indexing (after Claude saves a page, say)
+    /// doesn't lose it. Null when no unchecked page has a problem.
+    /// </summary>
+    public static string? IssueNotice(IReadOnlyList<DocumentPage> pages)
+    {
+        var problems = pages.Where(PdfPages.HasIssue).Select(p => p.Page).OrderBy(n => n).ToList();
+        if (problems.Count == 0) return null;
+        var list = string.Join(", ", problems.Take(30)) + (problems.Count > 30 ? ", …" : "");
+        return $"{problems.Count} page{(problems.Count > 1 ? "s" : "")} had OCR or layout problems ({list}). " +
+               "Re-index… → OCR → \"Pages with problems\" re-runs them; Claude can check them with list_pages(which=\"problems\").";
+    }
+
     static void ApplyPageStats(Document doc, List<DocumentPage> pages)
     {
         var ocrPages = pages.Where(p => p.Source == PageSource.Ocr && PdfPages.HasUsefulText(p.OcrText)).ToList();
@@ -406,6 +432,7 @@ public sealed class IngestWorker(
         doc.OcrPages = ocrPages.Count;
         doc.EmptyPages = pages.Count(p => !PdfPages.HasUsefulText(p.EffectiveText));
         doc.SuspectPages = pages.Count(p => p.SuspectReason != null && p.Source != PageSource.Ocr);
+        doc.IssuePages = pages.Count(PdfPages.HasIssue);
         doc.LayoutPages = pages.Count(p => p.LayoutAt != null && (p.Source == PageSource.Layout || (p.Source == PageSource.Ocr && p.LayoutJson != null)));
         doc.OcrModel = ocrPages.OrderByDescending(p => p.OcrAt).FirstOrDefault()?.OcrModel;
         doc.OcrAt = ocrPages.Max(p => p.OcrAt);

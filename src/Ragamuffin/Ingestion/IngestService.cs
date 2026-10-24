@@ -21,7 +21,10 @@ public sealed class IngestService(
     CollectionService collections,
     IOptions<RagOptions> options)
 {
-    public async Task<UploadResult> UploadAsync(string name, string collection, byte[] bytes, CancellationToken ct)
+    /// <param name="allowBinary">
+    /// Accept a binary file and index it as a hex dump (import_file); the web upload leaves this off and rejects binaries.
+    /// </param>
+    public async Task<UploadResult> UploadAsync(string name, string collection, byte[] bytes, CancellationToken ct, bool allowBinary = false)
     {
         name = name.Trim();
         collection = CollectionRules.Normalize(collection);
@@ -33,8 +36,11 @@ public sealed class IngestService(
             return new(name, collection, null, "rejected", "File is empty.");
         if (bytes.Length > options.Value.MaxUploadBytes)
             return new(name, collection, null, "rejected", "File is larger than the upload limit.");
-        if (!TextExtractor.IsPdf(name) && TextExtractor.DecodeText(bytes) is null)
+        var binary = !TextExtractor.IsPdf(name) && TextExtractor.DecodeText(bytes) is null;
+        if (binary && !allowBinary)
             return new(name, collection, null, "rejected", "Binary file; only text, markdown, source code and PDF are supported.");
+        if (binary && bytes.Length > options.Value.Mcp.MaxBinaryBytes)
+            return new(name, collection, null, "rejected", $"Binary file larger than the {options.Value.Mcp.MaxBinaryBytes:N0}-byte limit for encoded files.");
 
         var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
         var now = DateTimeOffset.UtcNow;
@@ -67,7 +73,8 @@ public sealed class IngestService(
             db.Documents.Add(doc);
         }
 
-        (doc.ContentType, doc.Language) = TextExtractor.Classify(name);
+        (doc.ContentType, doc.Language) = binary ? ("binary", null) : TextExtractor.Classify(name);
+        doc.Encoding = binary ? Encodings.Hex : null;
         doc.Sha256 = sha;
         doc.SizeBytes = bytes.Length;
         doc.Status = DocumentStatus.Pending;

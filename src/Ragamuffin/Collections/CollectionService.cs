@@ -5,7 +5,7 @@ using Ragamuffin.Ingestion;
 namespace Ragamuffin.Collections;
 
 public sealed record CollectionInfo(string Name, bool IsDefault, int Documents, int Chunks, DateTimeOffset CreatedAt,
-    string? Description, List<string> Keywords);
+    string? Description, List<string> Keywords, bool Muted);
 
 public sealed record CollectionDetails(string Name, string? Description, List<string>? Keywords);
 
@@ -28,10 +28,18 @@ public sealed class CollectionService(RagDbContext db, FileStore files)
             .Select(c => new CollectionInfo(c.Name, c.Name == Collection.Default,
                 stats.GetValueOrDefault(c.Name)?.Documents ?? 0,
                 stats.GetValueOrDefault(c.Name)?.Chunks ?? 0,
-                c.CreatedAt, c.Description, c.Keywords))
+                c.CreatedAt, c.Description, c.Keywords, c.Muted))
             .OrderByDescending(c => c.IsDefault)
             .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>Mutes or unmutes a collection; returns false if there's no such collection.</summary>
+    public async Task<bool> SetMutedAsync(string name, bool muted, CancellationToken ct)
+    {
+        var updated = await db.Collections.Where(c => c.Name == name).ExecuteUpdateAsync(s => s.SetProperty(c => c.Muted, muted), ct);
+        Mcp.LibraryGuide.ClearCache();
+        return updated > 0;
     }
 
     public async Task<List<CreateResult>> CreateAsync(IEnumerable<string> names, CancellationToken ct)

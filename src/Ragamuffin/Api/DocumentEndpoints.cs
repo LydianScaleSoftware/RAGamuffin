@@ -29,9 +29,9 @@ public static class DocumentEndpoints
                 {
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
-                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
+                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
-                    d.ChunkSource,
+                    d.ChunkSource, d.Encoding,
                     ClaudePages = db.Pages.Count(p => p.DocumentId == d.Id && p.Source == PageSource.Claude),
                     SourceName = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
                     ConvertedTo = db.Documents.Where(o => o.SourceDocumentId == d.Id).Select(o => o.Name).FirstOrDefault(),
@@ -45,10 +45,10 @@ public static class DocumentEndpoints
                 {
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
-                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
+                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
-                    d.ChunkSource, d.ClaudePages, d.SourceName, d.ConvertedTo,
-                    Origin = StatsService.Classify(d.ContentType, mix).ToString(),
+                    d.ChunkSource, d.Encoding, d.ClaudePages, d.SourceName, d.ConvertedTo,
+                    Origin = (d.Encoding is not null ? TextOrigin.EncodedBinary : StatsService.Classify(d.ContentType, mix)).ToString(),
                     RawEmbeddedPages = mix?.Embedded ?? 0,
                 };
             });
@@ -76,7 +76,7 @@ public static class DocumentEndpoints
                 {
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes, d.Sha256,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt, d.Text,
-                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.OcrModel, d.OcrAt,
+                    d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                 })
                 .SingleOrDefaultAsync(ct);
@@ -97,7 +97,13 @@ public static class DocumentEndpoints
         {
             var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id, ct);
             if (doc is null || !files.Exists(id)) return Results.NotFound();
-            var type = doc.ContentType == "pdf" ? "application/pdf" : "text/plain; charset=utf-8";
+            var type = doc.ContentType switch
+            {
+                "pdf" => "application/pdf",
+                "binary" => "application/octet-stream",
+                "markdown" => "text/markdown; charset=utf-8",
+                _ => "text/plain; charset=utf-8",
+            };
             return Results.File(await files.ReadAsync(id, ct), type, Path.GetFileName(doc.Name));
         });
 
@@ -126,7 +132,7 @@ public static class DocumentEndpoints
         });
 
         // Rebuilds every document's chunks from its current text (PDF pages keep their OCR, layout and Claude text;
-        // Claude-chosen chunks keep their boundaries). Used after changing the embedding model or chunking rules.
+        // Claudomatics keep their boundaries). Used after changing the embedding model or chunking rules.
         api.MapPost("/reindex-all", async (RagDbContext db, IngestQueue queue, CancellationToken ct) =>
         {
             var ids = await db.Documents.Where(d => d.Status != DocumentStatus.Ocr && d.Status != DocumentStatus.Pending)
@@ -143,6 +149,10 @@ public static class DocumentEndpoints
 
         api.MapPost("/collections", async (CreateCollectionsRequest req, CollectionService collections, CancellationToken ct) =>
             Results.Ok(await collections.CreateAsync(req.Names ?? [], ct)));
+
+        // Mute a collection (left out of search unless named explicitly) or unmute it.
+        api.MapPost("/collections/mute", async (MuteCollectionRequest req, CollectionService collections, CancellationToken ct) =>
+            await collections.SetMutedAsync(req.Name, req.Muted, ct) ? Results.NoContent() : Results.NotFound());
 
         api.MapPost("/collections/details", async (UpdateCollectionDetailsRequest req, CollectionService collections, CancellationToken ct) =>
         {
@@ -177,10 +187,12 @@ public static class DocumentEndpoints
                 : Results.Ok(await collections.RemoveAsync(req.Names ?? [], mode.Value, ct));
         });
 
-        api.MapGet("/search", async (string q, int? k, string? collection, SearchService search, CancellationToken ct) =>
+        // Like MCP search: muted collections are left out unless includeMuted is set or the collection is named.
+        api.MapGet("/search", async (string q, int? k, string? collection, bool? includeMuted, SearchService search, CancellationToken ct) =>
             string.IsNullOrWhiteSpace(q)
                 ? Results.BadRequest("q is required")
-                : Results.Ok(await search.SearchAsync(q, k ?? 8, collection, ct)));
+                : Results.Ok(await search.SearchAsync(q, k ?? 8,
+                    string.IsNullOrWhiteSpace(collection) ? new SearchScope(IncludeMuted: includeMuted == true) : SearchScope.For(collection), ct)));
 
         // The on/off switch for agents (MCP). Off makes every tool call a no-op that says so.
         api.MapGet("/settings/agents", (McpSwitch sw) => new { enabled = sw.Enabled, writes = sw.WritesEnabled, changedAt = sw.ChangedAt });
@@ -233,3 +245,5 @@ public sealed record UpdateCollectionDetailsRequest(List<CollectionDetails>? Ite
 public sealed record SuggestCollectionRequest(string Name);
 
 public sealed record AgentsSetting(bool? Enabled, bool? Writes);
+
+public sealed record MuteCollectionRequest(string Name, bool Muted);

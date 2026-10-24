@@ -41,7 +41,10 @@ async function load() {
   $("tiles").innerHTML = [
     tile("Documents", fmt(t.documents)),
     tile("PDF pages", fmt(t.pages)),
-    tile("Chunks", fmt(t.chunks), `${t.avgChunksPerDocument} per document`),
+    tile("Chunks", fmt(t.chunks), `${t.avgChunksPerDocument} per document` +
+      (t.hiddenChunks ? ` · ${fmt(t.hiddenChunks)} left out of search (pages covered by conversions)` : "")),
+    tile("Claudomatics", t.claudomatics ? `<a href="/claudomatics.html">${fmt(t.claudomatics)}</a>` : "0",
+      t.claudomatics ? `${fmt(t.avgClaudomaticChars)} characters each on average` : "chunks Claude chose"),
     tile("Characters indexed", fmt(t.characters), `${fmt(t.avgChunkChars)} per chunk`),
     tile("Original files", bytes(t.sizeBytes)),
     tile("Database", bytes(r.databaseBytes)),
@@ -60,6 +63,7 @@ async function load() {
     tile("Pages not laid out", drill(t.pagesWithoutLayout, total, "pages:no-layout")),
     tile("Estimated time", remaining ? (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min` : `${hours.toFixed(1)} h`) : "—", "at about 45 s per page"),
     tile("Pages that look like poor old OCR", drill(t.suspectPages, total, "pages:suspect")),
+    tile("Pages with OCR problems", drill(t.problemPages, total, "pages:problems"), "glm-ocr or layout failed on them; not yet checked by Claude"),
     tile("Documents with notices", drill(t.documentsWithNotices, total, "notices")),
     tile("Failed", drill(t.statuses.failed ?? 0, total, "status:failed")),
   ].join("");
@@ -68,11 +72,13 @@ async function load() {
     { head: "Documents", cell: (g) => drill(g.documents, g, "") },
     { head: "PDF pages", cell: (g) => fmt(g.pages) },
     { head: "Chunks", cell: (g) => fmt(g.chunks) },
+    { head: "Claudomatics", cell: (g) => g.claudomatics
+      ? `<a href="/claudomatics.html${g.name === "All collections" ? "" : `?collection=${encodeURIComponent(g.name)}`}">${fmt(g.claudomatics)}</a>` : "0" },
     { head: "Characters", cell: (g) => fmt(g.characters) },
     { head: "Size", cell: (g) => bytes(g.sizeBytes) },
   ]);
 
-  const TYPES = [["markdown", "Markdown"], ["text", "Text"], ["code", "Code"], ["pdf", "PDF"]];
+  const TYPES = [["markdown", "Markdown"], ["text", "Text"], ["code", "Code"], ["pdf", "PDF"], ["binary", "Binary"]];
   table("typesTable", groups, total, TYPES.map(([key, head]) => ({ head, cell: (g) => drill(g.types[key] ?? 0, g, `type:${key}`) })));
   const langs = Object.entries(t.languages);
   $("languages").innerHTML = langs.length
@@ -81,7 +87,8 @@ async function load() {
 
   const ORIGINS = [
     ["OriginalText", "Original text"], ["PdfEmbedded", "PDF embedded"], ["PdfEmbeddedLayout", "Embedded + layout"],
-    ["PdfOcr", "PDF OCR"], ["PdfMixed", "Mixed"], ["PdfNoText", "No text yet"],
+    ["PdfOcr", "PDF OCR"], ["PdfClaude", "Checked by Claude"], ["PdfMixed", "Mixed"], ["PdfNoText", "No text yet"],
+    ["EncodedBinary", "Encoded binary"],
   ];
   table("originTable", groups, total, ORIGINS.map(([key, head]) => ({ head, cell: (g) => drill(g.origins[key] ?? 0, g, `origin:${key}`) })));
 
@@ -90,6 +97,7 @@ async function load() {
     { head: "Layout-arranged", cell: (g) => drill(g.pdfPages.layout, g, "pages:layout") },
     { head: "OCR (by region)", cell: (g) => drill(g.pdfPages.ocrWithLayout, g, "pages:ocr") },
     { head: "OCR (whole page)", cell: (g) => drill(g.pdfPages.ocrWholePage, g, "pages:ocr") },
+    { head: "Checked by Claude", cell: (g) => drill(g.pdfPages.claude, g, "pages:claude") },
     { head: "Blank / needs OCR", cell: (g) => drill(g.pdfPages.blank, g, "pages:needs-ocr") },
   ]);
 

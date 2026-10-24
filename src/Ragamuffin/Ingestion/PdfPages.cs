@@ -18,6 +18,8 @@ public enum OcrScope
     Suspect,
     /// <summary>Every page, replacing embedded text.</summary>
     All,
+    /// <summary>Pages whose last OCR or layout run had a problem (see <see cref="DocumentPage.Issue"/>) and Claude hasn't checked.</summary>
+    Problems,
 }
 
 public static class OcrScopes
@@ -27,6 +29,7 @@ public static class OcrScopes
         "missing" => OcrScope.MissingText,
         "suspect" => OcrScope.Suspect,
         "all" => OcrScope.All,
+        "problems" => OcrScope.Problems,
         _ => null,
     };
 
@@ -35,6 +38,7 @@ public static class OcrScopes
         OcrScope.MissingText => "missing",
         OcrScope.Suspect => "suspect",
         OcrScope.All => "all",
+        OcrScope.Problems => "problems",
         _ => null,
     };
 }
@@ -142,12 +146,16 @@ public static partial class PdfPages
         .Where(p => scope switch
         {
             OcrScope.All => true,
+            OcrScope.Problems => HasIssue(p),
             OcrScope.Suspect => !HasUsefulText(p.EffectiveText) || (p.SuspectReason != null && p.Source != PageSource.Ocr),
             _ => !HasUsefulText(p.EffectiveText),
         })
         .Select(p => p.Page)
         .OrderBy(p => p)
         .ToList();
+
+    /// <summary>A page whose last OCR or layout run went wrong and that Claude hasn't checked since.</summary>
+    public static bool HasIssue(DocumentPage p) => p.Issue != null && p.Source != PageSource.Claude;
 
     /// <summary>Pages whose embedded text should be laid out: not OCR'd, and not yet analyzed unless redoing.</summary>
     public static List<int> SelectForLayout(IEnumerable<DocumentPage> pages, LayoutMode mode) => pages

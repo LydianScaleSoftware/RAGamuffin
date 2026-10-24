@@ -31,7 +31,7 @@ public sealed class LibraryWriteTools(RagDbContext db, DocumentReader reader, In
     public static readonly HashSet<string> Names = ["import_file", "add_document", "set_chunks", "delete_document", "set_page_text"];
 
     [McpServerTool(Name = "import_file", ReadOnly = false, Destructive = false)]
-    [Description("Add a file from this computer to the library as it is (PDF, Markdown, text or source code), the same as uploading it in the web UI. The server chunks it; PDFs get their pages extracted for checking with list_pages/get_page.")]
+    [Description("Add a file from this computer to the library as it is (PDF, Markdown, text or source code), the same as uploading it in the web UI. The server chunks it; PDFs get their pages extracted for checking with list_pages/get_page. A binary file (ROM, disk image, executable) is stored encoded as a hex dump, up to 1 MB.")]
     public async Task<string> ImportFile(
         [Description("Absolute path of the file, e.g. /Users/me/Manuals/Toolbox.pdf.")] string path,
         [Description("Collection to add it to (created if new). Default: the default collection.")] string? collection = null,
@@ -40,12 +40,15 @@ public sealed class LibraryWriteTools(RagDbContext db, DocumentReader reader, In
     {
         var (bytes, full, problem) = await localFiles.ReadAsync(path, ct);
         if (bytes is null) return problem!;
-        var result = await ingest.UploadAsync(string.IsNullOrWhiteSpace(name) ? Path.GetFileName(full) : name, collection ?? "", bytes, ct);
+        var result = await ingest.UploadAsync(string.IsNullOrWhiteSpace(name) ? Path.GetFileName(full) : name, collection ?? "", bytes, ct, allowBinary: true);
         return result.Outcome switch
         {
             "rejected" => $"Not added: {result.Error}",
             "unchanged" => $"{result.Name} ({result.Collection}) is already in the library with the same content.",
             _ => $"{result.Name} {result.Outcome} in {result.Collection}; indexing in the background (id {result.Id}). " +
+                 (TextExtractor.DecodeText(bytes) is null && !TextExtractor.IsPdf(result.Name)
+                     ? "It's binary, so it's stored ENCODED as a hex dump (offset, 16 bytes, ASCII per line; the original bytes are kept). Search finds byte patterns and embedded strings; you can re-chunk it with set_chunks, giving routines or tables titles and summaries. "
+                     : "") +
                  (TextExtractor.IsPdf(result.Name)
                      ? $"In a minute, list_pages(\"{result.Name}\") shows pages that need checking (scans without text show as having none)."
                      : "It's searchable in a few seconds."),
@@ -53,7 +56,7 @@ public sealed class LibraryWriteTools(RagDbContext db, DocumentReader reader, In
     }
 
     [McpServerTool(Name = "add_document", ReadOnly = false, Destructive = false)]
-    [Description("Add a text document (usually Markdown you wrote, e.g. a PDF manual converted to Markdown, or source code) with the chunks you choose: each chunk is a range of whole lines with a title and summary, any size up to the limit, so a section, table, listing or whole function stays together. Replaces a document of the same name.")]
+    [Description("Add a text document (usually Markdown you wrote, e.g. a PDF manual converted to Markdown, or source code) with the chunks you choose (Claudomatics): each chunk is a range of whole lines with a title and summary, any size up to the limit, so a section, table, listing or whole function stays together. Replaces a document of the same name.")]
     public async Task<string> AddDocument(
         [Description("Name to store it under, ending in its type: .md for Markdown, .c/.cs/.py… for code, .txt for text. E.g. \"Manuals/Toolbox Reference Vol 2.md\".")] string name,
         [Description("The chunks, in order, not overlapping. Lines between chunks may be left out on purpose (e.g. a table of contents).")] List<ChunkInput> chunks,

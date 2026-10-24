@@ -46,7 +46,7 @@ In the tables below, *default* is the value built into the code; where the check
 | `Rag:ChunkMaxChars` | `1800` | Hard cap on a chunk's size. |
 | `Rag:ChunkOverlapChars` | `150` | Trailing text carried into the next chunk so passages aren't cut off mid-thought. |
 
-These apply to the server's own chunking; documents Claude adds with its own chunks aren't affected. Changes apply to documents indexed afterwards; re-index existing documents to re-chunk them (`POST /api/reindex-all` re-indexes everything).
+These apply to the server's own chunking; documents Claude adds as Claudomatics aren't affected. Changes apply to documents indexed afterwards; re-index existing documents to re-chunk them (`POST /api/reindex-all` re-indexes everything).
 
 ## OCR (`Rag:Ocr`)
 
@@ -100,6 +100,7 @@ Token budgets are estimated at about 3.5 characters per token and sized for Clau
 | `DocumentTokens` | `25000` | Budget for one `get_document` or `get_chunk` answer. Longer reads are cut with a hint for where to continue. |
 | `ListTokens` | `6000` | Budget for one `list_documents` answer; the rest is summarized as "…and N more". |
 | `ImportRoots` | *(empty: your home folder)* | Folders `import_file` and `add_document` may read files from, as a list: `["/Users/me/Manuals", "/Users/me/src"]`. Paths outside them are refused. |
+| `MaxBinaryBytes` | `1048576` (1 MB) | Largest binary file `import_file` and `add_document` accept; it's stored as a hex dump (about 4.9 times its size as text) plus the original bytes. The web upload rejects binaries. |
 | `MaxChunkChars` | `60000` | Largest chunk Claude may define with `add_document` or `set_chunks`. |
 | `AnswerModel` | *(empty)* | Ollama chat model for the optional `ask_library` tool, which writes a short answer from retrieved passages. Empty leaves the tool out, since Claude reads the passages itself. Set it (e.g. `qwen3:8b`) for smaller agents. |
 | `AnswerContextTokens` | `3000` | How much retrieved text the answer model is given (up to six passages, excerpted to fit). |
@@ -152,13 +153,14 @@ These aren't settings; changing them means editing the code.
 | Rebuilt tables abandoned when a cell holds ≥ 3 line breaks | `LayoutAssembler.MaxLinesPerCell` | The table then keeps the PDF's own content order. |
 | Hybrid search: reciprocal rank fusion with k = 60; at least 20 candidates from each of vector and full-text search | `SearchService` | Full-text search first requires every word; when that finds too few, it adds chunks matching any word, ranked by how rare the matched words are. |
 | Results per search: up to 50 (web UI/API), up to 25 (MCP) | `SearchService`, `RagTools` | MCP search fetches four times as many candidates (at most 50), then merges and de-duplicates them. |
-| MCP passages merge at most 3 consecutive server-made chunks (Claude's chunks are never merged) and rank by their chunks' summed scores; when duplicates differ in code, the one from the document whose name the question mentions is kept; passages sharing ≥ 60% of their 5-word phrases count as duplicates | `LeanText.MaxRun`, `LeanText.Dedupe` | Keeps one manual's many editions from filling the results. |
+| MCP passages merge at most 3 consecutive server-made chunks (Claudomatics are never merged) and rank by their chunks' summed scores; when duplicates differ in code, the one from the document whose name the question mentions is kept; passages sharing ≥ 60% of their 5-word phrases count as duplicates | `LeanText.MaxRun`, `LeanText.Dedupe` | Keeps one manual's many editions from filling the results. |
 | Excerpts pick the lines that cover the most query terms (rare terms and repeated mentions count more), then join nearby lines and add the lines that follow | `LeanText.Excerpt` | Used for search results and for the passages `ask_library` sends its model. |
 | `ask_library` retrieves 24 candidates and answers from the best 6 passages. Any name the answer calls like a function (`Name(`) that isn't in those passages triggers one rewrite with the list of calls the passages do show; if some remain, the answer carries a warning naming them. Language keywords and standard C library functions (`printf`, `strlen`, …) are exempt, since manuals describe them without naming them | `LibraryAnswerer` | Small models tend to invent plausible toolbox calls. |
 | Outlines of plain-text documents come from detected headings: short capitalized lines after a blank line or outdented from the next line; "Chapter", "Part", "Appendix"… start top-level entries | `DocumentReader.DetectHeadings` | Markdown headings are used when present; PDFs without headings fall back to each page's opening line. |
 | A conversion hides the PDF pages its chunks cover (by their `pages`); a conversion without page numbers hides the whole PDF | `SearchService` | Lets a manual be converted chapter by chapter. |
-| Claude's chunks: whole lines, in order, not overlapping; uncovered lines with text are reported back | `ChunkPlan` | |
-| Pages "need review" when they have no usable text, embedded text that looks garbled, or only glm-ocr's reading | `PageTools.NeedsReview` | A page Claude saved or confirmed no longer needs review; a later glm-ocr run doesn't replace Claude's text. |
+| Claudomatics: whole lines, in order, not overlapping; uncovered lines with text are reported back | `ChunkPlan` | |
+| Pages "need review" when they have a recorded OCR or layout problem, no usable text, embedded text that looks garbled, or only glm-ocr's reading; problem pages are listed first | `PageTools.NeedsReview` | A page Claude saved or confirmed no longer needs review; a later glm-ocr run doesn't replace Claude's text. |
+| Muted collections are left out of search (MCP and Test search) unless named in `collection`/`collections`; listings and instructions still show them, marked | `SearchService.ResolveAsync` | The mute switch is on the Collections page (`POST /api/collections/mute`). |
 | Collection names ≤ 100 characters; descriptions ≤ 1,000 characters; up to 20 keywords of ≤ 60 characters | `CollectionRules` | |
 | Batch time estimates assume about 45 seconds per page | `app.js`, `stats.js` | Display only. |
 | OCR/layout availability cached 15 s; MCP instructions cached 30 s | `OcrEngine`, `LayoutClient`, `LibraryGuide` | |

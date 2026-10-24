@@ -19,7 +19,7 @@ public sealed class Chunk
     public int? EndLine { get; set; }
     public int? Page { get; set; }
 
-    /// <summary>Last PDF page the chunk covers when it spans several (Claude-chosen chunks of a converted manual).</summary>
+    /// <summary>Last PDF page the chunk covers when it spans several (Claudomatics of a converted manual).</summary>
     public int? PageEnd { get; set; }
 
     /// <summary>The chunk's own title, given by Claude (e.g. "Listing 10-1: Writing text to the graphics screen").</summary>
@@ -31,7 +31,7 @@ public sealed class Chunk
     /// </summary>
     public string? Summary { get; set; }
 
-    /// <summary>What the chunk is: prose, table, example, code, function, … (Claude-chosen chunks only).</summary>
+    /// <summary>What the chunk is: prose, table, example, code, function, … (Claudomatics only).</summary>
     public string? Kind { get; set; }
 
     /// <summary>Function, class or other code symbol the chunk defines, for code chunks.</summary>
@@ -39,6 +39,9 @@ public sealed class Chunk
 
     /// <summary>True when the text came from local OCR rather than the file itself.</summary>
     public bool Ocr { get; set; }
+
+    /// <summary>When the chunk was written; Claudomatics are grouped by it.</summary>
+    public DateTimeOffset CreatedAt { get; set; }
 
     public Vector? Embedding { get; set; }
 

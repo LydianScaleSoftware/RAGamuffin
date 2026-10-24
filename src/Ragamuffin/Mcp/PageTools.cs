@@ -24,10 +24,10 @@ public sealed record PageTextInput(
 public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine ocr, FileStore files, IngestQueue queue)
 {
     [McpServerTool(Name = "list_pages", ReadOnly = true)]
-    [Description("List a PDF's pages with where each page's text comes from (embedded, glm-ocr, layout, claude), its length and any reason it looks wrong. Use to find pages to check with get_page.")]
+    [Description("List a PDF's pages with where each page's text comes from (embedded, glm-ocr, layout, claude), its length, and any problem from OCR or the reason it looks wrong. Pages with recorded problems come first. Use to find pages to check with get_page.")]
     public async Task<string> ListPages(
         [Description("PDF document name (partial names work) or id.")] string document,
-        [Description("\"review\" (default): pages that are empty, look like poor OCR, or were OCR'd by glm-ocr and not yet checked by Claude. \"all\": every page.")] string? which = null,
+        [Description("\"review\" (default): pages that had OCR or layout problems, are empty, look like poor OCR, or were OCR'd by glm-ocr, and Claude hasn't checked. \"problems\": only pages with a recorded OCR or layout problem. \"all\": every page.")] string? which = null,
         [Description("Only these pages, e.g. \"1-100\".")] string? pages = null,
         [Description("Collection, if the name exists in several.")] string? collection = null,
         CancellationToken ct = default)
@@ -39,12 +39,18 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
 
         var all = await db.Pages.AsNoTracking().Where(p => p.DocumentId == id).OrderBy(p => p.Page).ToListAsync(ct);
         if (all.Count == 0) return $"{name} has no pages (it isn't a PDF, or it hasn't been indexed yet).";
-        var review = !string.Equals(which?.Trim(), "all", StringComparison.OrdinalIgnoreCase);
+        var mode = which?.Trim().ToLowerInvariant() switch { "all" => "all", "problems" => "problems", _ => "review" };
         var shown = all.Where(p => p.Page >= range.Start && p.Page <= (range.End ?? int.MaxValue))
-            .Where(p => !review || NeedsReview(p)).ToList();
+            .Where(p => mode switch { "all" => true, "problems" => PdfPages.HasIssue(p), _ => NeedsReview(p) })
+            // Pages with a recorded problem first: they're the likeliest to be wrong.
+            .OrderBy(p => mode == "all" || !PdfPages.HasIssue(p)).ThenBy(p => p.Page).ToList();
 
-        var sb = new StringBuilder($"{name}: {all.Count} pages; {all.Count(NeedsReview)} need review, {all.Count(p => p.Source == PageSource.Claude)} checked by Claude.\n");
-        sb.Append(review ? "Pages needing review" : "Pages").Append(pages is null ? "" : $" in {pages}").Append($" ({shown.Count}):\n");
+        var notice = await db.Documents.Where(d => d.Id == id).Select(d => d.Error).SingleAsync(ct);
+        var sb = new StringBuilder($"{name}: {all.Count} pages; {all.Count(NeedsReview)} need review " +
+            $"({all.Count(PdfPages.HasIssue)} with recorded OCR or layout problems), {all.Count(p => p.Source == PageSource.Claude)} checked by Claude.\n");
+        if (notice is not null) sb.Append($"Notice: {notice}\n");
+        sb.Append(mode switch { "all" => "Pages", "problems" => "Pages with problems", _ => "Pages needing review" })
+            .Append(pages is null ? "" : $" in {pages}").Append($" ({shown.Count}):\n");
         foreach (var p in shown) sb.Append(Describe(p)).Append('\n');
         if (shown.Count > 0) sb.Append($"\nLook at one with get_page(\"{name}\", page=N); save corrected text with set_page_text.");
         return sb.ToString().TrimEnd();
@@ -170,10 +176,13 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
         if (updated > 0) await queue.EnqueueAsync(id, ct);
     }
 
-    /// <summary>Empty, suspect, or read only by glm-ocr: pages whose text Claude hasn't confirmed and may be wrong.</summary>
+    /// <summary>
+    /// A recorded OCR/layout problem, empty, suspect, or read only by glm-ocr: pages whose text Claude hasn't confirmed
+    /// and may be wrong.
+    /// </summary>
     public static bool NeedsReview(DocumentPage p) =>
         p.Source != PageSource.Claude &&
-        (!PdfPages.HasUsefulText(p.EffectiveText) || p.SuspectReason is not null || p.Source == PageSource.Ocr);
+        (p.Issue is not null || !PdfPages.HasUsefulText(p.EffectiveText) || p.SuspectReason is not null || p.Source == PageSource.Ocr);
 
     static string Describe(DocumentPage p)
     {
@@ -186,6 +195,7 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
         };
         var text = p.EffectiveText;
         var sb = new StringBuilder($"- p.{p.Page}: {source}, {(PdfPages.HasUsefulText(text) ? $"{text!.Length:N0} chars" : "no usable text")}");
+        if (p.Issue is not null) sb.Append(p.Source == PageSource.Claude ? $"; had a problem before Claude checked it ({p.Issue})" : $"; PROBLEM: {p.Issue}");
         if (p.SuspectReason is not null && p.Source != PageSource.Claude) sb.Append($"; embedded text looks wrong ({p.SuspectReason})");
         if (p.ClaudeNote is not null) sb.Append($"; Claude's note: {p.ClaudeNote}");
         return sb.ToString();

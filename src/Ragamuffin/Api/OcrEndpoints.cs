@@ -34,7 +34,7 @@ public static class OcrEndpoints
             IngestQueue queue, CancellationToken ct) =>
         {
             var scope = OcrScopes.Parse(req?.Scope ?? "missing");
-            if (scope is null) return Results.BadRequest("scope must be \"missing\", \"suspect\" or \"all\"");
+            if (scope is null) return Results.BadRequest("scope must be \"problems\", \"missing\", \"suspect\" or \"all\"");
 
             var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id, ct);
             if (doc is null) return Results.NotFound();
