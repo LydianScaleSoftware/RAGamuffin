@@ -90,3 +90,23 @@ async function initAgentsSwitch() {
 }
 
 initAgentsSwitch();
+
+/** Puts a "Clear search" button inside the right end of every input marked data-clearable. Clearing fires
+ *  "input" so the page's own filter handlers run. The button hides while the placeholder shows (CSS). */
+for (const input of document.querySelectorAll("input[data-clearable]")) {
+  const wrap = document.createElement("span");
+  wrap.className = "clearable";
+  if (input.classList.contains("grow")) { input.classList.remove("grow"); wrap.classList.add("grow"); }
+  input.replaceWith(wrap);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "clear-input";
+  button.title = button.ariaLabel = "Clear search";
+  button.textContent = "✕";
+  button.addEventListener("click", () => {
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+  });
+  wrap.append(input, button);
+}

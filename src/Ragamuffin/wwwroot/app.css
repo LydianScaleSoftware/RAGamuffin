@@ -58,6 +58,18 @@ input, select, button, .button {
   border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
 }
 input[type=number] { width: 70px; }
+
+/* ---------- clear-search button inside inputs (common.js) ---------- */
+.clearable { position: relative; display: inline-flex; }
+.clearable > input { flex: 1; min-width: 0; padding-right: 28px; }
+.clearable > input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.clear-input {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--muted); font-size: 12px; line-height: 20px; cursor: pointer;
+}
+.clear-input:hover, .clear-input:focus-visible { background: var(--border); color: var(--text); }
+.clearable > input:placeholder-shown + .clear-input { display: none; }
 button, .button {
   background: var(--accent); color: var(--accent-text); border-color: transparent;
   cursor: pointer; text-decoration: none; display: inline-block;

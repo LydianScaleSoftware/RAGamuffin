@@ -50,7 +50,7 @@
     <section class="card">
       <h2>Test search</h2>
       <form id="searchForm" class="row">
-        <input id="searchQuery" placeholder="Ask something your documents answer…" class="grow" required>
+        <input id="searchQuery" data-clearable placeholder="Ask something your documents answer…" class="grow" required>
         <select id="searchCollection"><option value="">All collections</option></select>
         <input id="searchK" type="number" min="1" max="50" value="8" title="Results">
         <label class="inline small" title="Muted collections are left out of search unless named; tick to search them too"><input type="checkbox" id="searchMuted"> include muted</label>
@@ -64,7 +64,7 @@
         <h2>Documents <span id="docCount" class="muted"></span></h2>
         <div class="row">
           <select id="filterCollection"><option value="">All collections</option></select>
-          <input id="filterName" type="search" placeholder="Filter by name">
+          <input id="filterName" type="search" data-clearable placeholder="Filter by name">
           <button id="resetFilters" class="secondary" hidden title="Show every document: clears the collection, name and Stats filters">Reset filters</button>
           <button id="clearSort" class="secondary" hidden title="Back to the default order (collection, then name)">Clear sort</button>
           <button id="processBtn" class="secondary" title="Queue OCR and layout analysis for many PDFs, e.g. as an overnight batch">Process…</button>
