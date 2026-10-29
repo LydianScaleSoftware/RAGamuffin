@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using Ragamuffin.Api;
 using Ragamuffin.Data;
+using Ragamuffin.Ingestion;
 using Ragamuffin.Search;
 
 namespace Ragamuffin.Mcp;
@@ -123,7 +124,8 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
             .Select(d => new
             {
                 d.Collection, d.Name, d.ContentType, d.Language, d.PageCount, d.ChunkCount, d.Status, d.OcrPages, d.ChunkSource, d.Encoding, d.SizeBytes,
-                d.Error, d.IssuePages,
+                d.Error, d.IssuePages, d.NoticeMuted,
+                d.ProblemPages, d.BlankPages, d.VerifiedPages, d.VerifiedAt, d.VerifiedBy, d.VerifiedNote,
                 Source = db.Documents.Where(o => o.Id == d.SourceDocumentId).Select(o => o.Name).FirstOrDefault(),
                 SourceSpans = db.Chunks.Where(k => d.SourceDocumentId != null && k.DocumentId == d.Id && k.Page != null)
                     .Select(k => new DocumentEndpoints.PageSpan(k.Page!.Value, k.PageEnd)).ToList(),
@@ -155,7 +157,10 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
                         (d.Source is null ? "" : $" — conversion of {d.Source}, standing in for its {Covered(DocumentEndpoints.PageRanges(d.SourceSpans))}") +
                         string.Concat(d.ConvertedTo.Select(c =>
                             $" — {Covered(DocumentEndpoints.PageRanges(c.Spans))} searched through its conversion {c.Name}")) +
-                        (d.Status == DocumentStatus.Ready && d.Error is not null ? $" — NOTICE: {d.Error}" : "") + "\n");
+                        (d.ContentType == "pdf" && d.Status == DocumentStatus.Ready
+                            ? $" — health: {PageHealth.Summary(d.ProblemPages, d.PageCount, d.BlankPages, d.VerifiedPages, d.VerifiedAt, d.VerifiedBy, d.VerifiedNote)}"
+                            : "") +
+                        (d.Status == DocumentStatus.Ready && d.Error is not null && !d.NoticeMuted ? $" — NOTICE: {d.Error}" : "") + "\n");
             if (sb.Length + line.Length > budget - 90) break;
             sb.Append(line);
             current = d.Collection;

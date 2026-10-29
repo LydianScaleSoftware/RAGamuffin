@@ -60,6 +60,30 @@ public sealed class Document
 
     /// <summary>Pages whose text was arranged by layout analysis (either OCR'd by region or embedded words placed by region).</summary>
     public int LayoutPages { get; set; }
+
+    // Page health (see PageHealth), recounted whenever pages change, are muted or are marked correct.
+    /// <summary>Pages whose text is probably wrong or missing, not muted and not checked.</summary>
+    public int ProblemPages { get; set; }
+    /// <summary>Pages with a note (something skipped, text intact), not muted.</summary>
+    public int NotePages { get; set; }
+    /// <summary>Pages whose problem or note the user muted.</summary>
+    public int MutedPages { get; set; }
+    /// <summary>Pages Claude checked or the user marked correct.</summary>
+    public int VerifiedPages { get; set; }
+    /// <summary>Pages without text whose image is blank too.</summary>
+    public int BlankPages { get; set; }
+
+    /// <summary>
+    /// When the document's text as a whole was accepted: by a sample of pages Claude checked against their images
+    /// ("claude"), or by the user ("user"). Cleared when an OCR or layout run, or a new upload, changes its pages.
+    /// </summary>
+    public DateTimeOffset? VerifiedAt { get; set; }
+    public string? VerifiedBy { get; set; }
+    /// <summary>What the verification was based on, e.g. "12 sampled pages matched their images".</summary>
+    public string? VerifiedNote { get; set; }
+
+    /// <summary>The user muted <see cref="Error"/> (a notice from the last run). Cleared when the notice changes.</summary>
+    public bool NoticeMuted { get; set; }
     public string? OcrModel { get; set; }
     public DateTimeOffset? OcrAt { get; set; }
 

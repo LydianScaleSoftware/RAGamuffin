@@ -134,7 +134,7 @@ public sealed class IngestWorker(
         var bytes = await ReadOriginalAsync(id, ct);
         if (doc.ContentType == "pdf")
         {
-            await SyncPagesAsync(db, id, PdfPages.Extract(bytes), ct);
+            await SyncPagesAsync(db, id, bytes, PdfPages.Extract(bytes), ct);
             await RebuildFromPagesAsync(db, doc, DocumentStatus.Pending, notice: null, ct);
             return;
         }
@@ -170,7 +170,7 @@ public sealed class IngestWorker(
         try
         {
             var bytes = await ReadOriginalAsync(doc.Id, stopping);
-            var pages = await SyncPagesAsync(db, doc.Id, PdfPages.Extract(bytes), stopping);
+            var pages = await SyncPagesAsync(db, doc.Id, bytes, PdfPages.Extract(bytes), stopping);
             var notices = new List<string>();
 
             // On resume, pages finished earlier in this job are already done.
@@ -278,8 +278,14 @@ public sealed class IngestWorker(
                         text = await ocr.TranscribeAsync(ocr.RenderPage(bytes, number - 1), cancel);
                         if (useLayout) issue = "Layout analysis failed, so the page was OCR'd as a whole (reading order and tables may be off).";
                     }
-                    if (!PdfPages.HasUsefulText(text)) issue = "OCR found no text on this page.";
-                    page.Issue = issue;
+                    if (!PdfPages.HasUsefulText(text))
+                    {
+                        issue = null;
+                        page.Blank = DetectBlank(bytes, number);
+                        if (page.Blank != true) issue = "OCR found no text on this page.";
+                    }
+                    PageHealth.SetIssue(page, issue);
+                    PageHealth.TextChanged(page);
 
                     page.OcrText = text;
                     page.OcrModel = model;
@@ -298,11 +304,13 @@ public sealed class IngestWorker(
                     if (result is null)
                     {
                         rotatedText.Add(number);
-                        page.Issue = "Layout analysis skipped because the page is rotated; it keeps its plain embedded text.";
+                        PageHealth.SetIssue(page, "Layout analysis skipped because the page is rotated; it keeps its plain embedded text.", IssueKinds.Note);
+                        page.LayoutAt = DateTimeOffset.UtcNow;
                     }
                     else
                     {
-                        page.Issue = null;
+                        PageHealth.SetIssue(page, null);
+                        if (page.Source is PageSource.Embedded or PageSource.Layout) PageHealth.TextChanged(page);
                         page.LayoutText = result.Text;
                         page.LayoutJson = result.RegionsJson;
                         page.LayoutAngle = result.Angle;
@@ -328,6 +336,12 @@ public sealed class IngestWorker(
         }
 
         log.LogInformation("Analyzed {Pages} pages of {Name} in {Seconds:F0}s", done, doc.Name, (DateTimeOffset.UtcNow - started).TotalSeconds);
+        if (done > alreadyDone.Count)
+        {
+            // The text changed, so an earlier "verified" for the whole document no longer applies.
+            doc.VerifiedAt = null;
+            doc.VerifiedBy = doc.VerifiedNote = null;
+        }
         var notes = new List<string>();
         if (blank.Count > 0) notes.Add($"OCR found no text on page{(blank.Count > 1 ? "s" : "")} {string.Join(", ", blank)}.");
         if (wholePage > 0) notes.Add($"{wholePage} page{(wholePage > 1 ? "s were" : " was")} OCR'd without layout analysis (layout service failed).");
@@ -340,14 +354,25 @@ public sealed class IngestWorker(
         db.Documents.Where(d => d.Id == id && d.Status == DocumentStatus.Ocr)
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.ProgressDone, done).SetProperty(d => d.ProgressTotal, total), ct);
 
-    /// <summary>Updates the per-page table with freshly extracted embedded text, keeping OCR text and sources.</summary>
-    static async Task<List<DocumentPage>> SyncPagesAsync(RagDbContext db, Guid documentId, List<EmbeddedPage> embedded, CancellationToken ct)
+    /// <summary>
+    /// Updates the per-page table with freshly extracted embedded text, keeping OCR text and sources, and checks pages
+    /// without text for whether they're blank.
+    /// </summary>
+    async Task<List<DocumentPage>> SyncPagesAsync(RagDbContext db, Guid documentId, byte[] bytes, List<EmbeddedPage> embedded, CancellationToken ct)
     {
         var existing = await db.Pages.Where(p => p.DocumentId == documentId).ToDictionaryAsync(p => p.Page, ct);
+        var textChanged = false;
         foreach (var e in embedded)
         {
             if (existing.TryGetValue(e.Page, out var page))
             {
+                if (page.EmbeddedText != e.Text)
+                {
+                    // A new version of the file: earlier marks referred to the old text, and blankness may differ.
+                    if (page.Source is PageSource.Embedded or PageSource.Layout) PageHealth.TextChanged(page);
+                    page.Blank = null;
+                    textChanged = true;
+                }
                 page.EmbeddedText = e.Text;
                 page.SuspectReason = e.SuspectReason;
             }
@@ -367,8 +392,28 @@ public sealed class IngestWorker(
             db.Pages.Remove(stale);
             existing.Remove(stale.Page);
         }
+        // Only for documents with some text: a fully scanned PDF waits for OCR, which checks the pages it finds empty.
+        if (existing.Values.Any(p => PdfPages.HasUsefulText(p.EffectiveText)))
+            foreach (var page in existing.Values.Where(p => p.Blank is null && !PdfPages.HasUsefulText(p.EffectiveText)))
+                page.Blank = DetectBlank(bytes, page.Page);
         await db.SaveChangesAsync(ct);
+        if (textChanged)
+            await db.Documents.Where(d => d.Id == documentId).ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.VerifiedAt, (DateTimeOffset?)null)
+                .SetProperty(d => d.VerifiedBy, (string?)null)
+                .SetProperty(d => d.VerifiedNote, (string?)null), ct);
         return existing.Values.OrderBy(p => p.Page).ToList();
+    }
+
+    /// <summary>Whether a page without text is blank in its image too; null when it can't be rendered.</summary>
+    bool? DetectBlank(byte[] bytes, int page)
+    {
+        try { return BlankPage.IsBlank(bytes, page - 1); }
+        catch (Exception ex)
+        {
+            log.LogWarning("Couldn't check page {Page} for blankness: {Error}", page, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>Rebuilds a PDF's chunks from its pages' current text and settles its status.</summary>
@@ -383,7 +428,9 @@ public sealed class IngestWorker(
         {
             ApplyPageStats(d, pages);
             d.Status = drafts.Count == 0 ? DocumentStatus.NeedsOcr : DocumentStatus.Ready;
-            d.Error = notice ?? (drafts.Count == 0 ? "No embedded text. Run OCR to read the scanned pages." : IssueNotice(pages));
+            var error = notice ?? (drafts.Count == 0 ? "No embedded text. Run OCR to read the scanned pages." : null);
+            if (d.Error != error) d.NoticeMuted = false;
+            d.Error = error;
             if (drafts.Count == 0) d.Text = null;
             d.ProgressDone = d.ProgressTotal = null;
             d.OcrScope = null;
@@ -412,20 +459,7 @@ public sealed class IngestWorker(
         }
     }
 
-    /// <summary>
-    /// The document's notice rebuilt from its pages' recorded problems, so re-indexing (after Claude saves a page, say)
-    /// doesn't lose it. Null when no unchecked page has a problem.
-    /// </summary>
-    public static string? IssueNotice(IReadOnlyList<DocumentPage> pages)
-    {
-        var problems = pages.Where(PdfPages.HasIssue).Select(p => p.Page).OrderBy(n => n).ToList();
-        if (problems.Count == 0) return null;
-        var list = string.Join(", ", problems.Take(30)) + (problems.Count > 30 ? ", …" : "");
-        return $"{problems.Count} page{(problems.Count > 1 ? "s" : "")} had OCR or layout problems ({list}). " +
-               "Re-index… → OCR → \"Pages with problems\" re-runs them; Claude can check them with list_pages(which=\"problems\").";
-    }
-
-    static void ApplyPageStats(Document doc, List<DocumentPage> pages)
+    internal static void ApplyPageStats(Document doc, List<DocumentPage> pages)
     {
         var ocrPages = pages.Where(p => p.Source == PageSource.Ocr && PdfPages.HasUsefulText(p.OcrText)).ToList();
         doc.PageCount = pages.Count;
@@ -433,6 +467,7 @@ public sealed class IngestWorker(
         doc.EmptyPages = pages.Count(p => !PdfPages.HasUsefulText(p.EffectiveText));
         doc.SuspectPages = pages.Count(p => p.SuspectReason != null && p.Source != PageSource.Ocr);
         doc.IssuePages = pages.Count(PdfPages.HasIssue);
+        PageHealth.Apply(doc, pages);
         doc.LayoutPages = pages.Count(p => p.LayoutAt != null && (p.Source == PageSource.Layout || (p.Source == PageSource.Ocr && p.LayoutJson != null)));
         doc.OcrModel = ocrPages.OrderByDescending(p => p.OcrAt).FirstOrDefault()?.OcrModel;
         doc.OcrAt = ocrPages.Max(p => p.OcrAt);

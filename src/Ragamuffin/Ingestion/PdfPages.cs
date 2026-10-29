@@ -88,13 +88,14 @@ public static partial class PdfPages
     /// </summary>
     public static string? SuspectReason(double invisibleShare, double imageCover, string? ocrProducer, string text)
     {
+        // Garbled text is the one reason that says the page itself is bad, so it wins over how the PDF was made.
+        if (LooksGarbled(text))
+            return PageHealth.GarbledReason;
         var scanned = imageCover >= 0.6;
         if (scanned && invisibleShare >= 0.5)
             return "Invisible text over a scanned image (typical of OCR'd scans)";
         if (scanned && ocrProducer is not null)
             return $"Scanned page with text from OCR software ({ocrProducer})";
-        if (LooksGarbled(text))
-            return "Text looks garbled";
         return null;
     }
 
@@ -154,8 +155,11 @@ public static partial class PdfPages
         .OrderBy(p => p)
         .ToList();
 
-    /// <summary>A page whose last OCR or layout run went wrong and that Claude hasn't checked since.</summary>
-    public static bool HasIssue(DocumentPage p) => p.Issue != null && p.Source != PageSource.Claude;
+    /// <summary>
+    /// A page whose last OCR or layout run recorded a problem (not a note) that isn't muted and that nobody has checked
+    /// since.
+    /// </summary>
+    public static bool HasIssue(DocumentPage p) => p.Issue != null && PageHealth.StateOf(p) == PageState.Problem;
 
     /// <summary>Pages whose embedded text should be laid out: not OCR'd, and not yet analyzed unless redoing.</summary>
     public static List<int> SelectForLayout(IEnumerable<DocumentPage> pages, LayoutMode mode) => pages

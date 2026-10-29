@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Ragamuffin.Data;
+using Ragamuffin.Ingestion;
 
 namespace Ragamuffin.Mcp;
 
@@ -18,7 +19,7 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
     int Budget => options.Value.Mcp.DocumentTokens;
 
     sealed record DocInfo(Guid Id, string Name, string Collection, string ContentType, string Status, string? Error,
-        int PageCount, int OcrPages, string? OcrModel, string? Encoding);
+        int PageCount, int OcrPages, string? OcrModel, string? Encoding, bool NoticeMuted = false, string Health = "");
 
     /// <summary>The banner put on everything read from a binary file, so it isn't mistaken for text the file contains.</summary>
     public static string EncodedBanner(string name) =>
@@ -56,7 +57,10 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
         if (await db.Collections.AnyAsync(c => c.Name == doc.Collection && c.Muted, ct))
             outline = $"Note: the {doc.Collection} collection is muted (left out of search unless named), so treat it as the user's " +
                       "alternative or older source.\n\n" + outline;
-        return doc.Error is null ? outline : $"Notice: {doc.Error}\n\n{outline}";
+        if (isPdf && doc.Status == DocumentStatus.Ready)
+            outline = $"Page health: {doc.Health}" +
+                      (doc.Health.Contains("problem page") ? $" (list_pages(\"{doc.Name}\", which=\"problems\") lists them)" : "") + ".\n\n" + outline;
+        return doc.Error is null || doc.NoticeMuted ? outline : $"Notice: {doc.Error}\n\n{outline}";
     }
 
     /// <summary>Finds a document by id, exact name, case-insensitive name, file name, or a unique partial match.</summary>
@@ -71,8 +75,16 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
     {
         var q = db.Documents.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(collection)) q = q.Where(d => d.Collection == collection.Trim());
-        var all = await q.Select(d => new DocInfo(d.Id, d.Name, d.Collection, d.ContentType, d.Status, d.Error, d.PageCount, d.OcrPages, d.OcrModel, d.Encoding))
-            .ToListAsync(ct);
+        var all = (await q.Select(d => new
+            {
+                Info = new DocInfo(d.Id, d.Name, d.Collection, d.ContentType, d.Status, d.Error, d.PageCount, d.OcrPages, d.OcrModel, d.Encoding, d.NoticeMuted, ""),
+                d.ProblemPages, d.BlankPages, d.VerifiedPages, d.VerifiedAt, d.VerifiedBy, d.VerifiedNote,
+            }).ToListAsync(ct))
+            .Select(x => x.Info with
+            {
+                Health = PageHealth.Summary(x.ProblemPages, x.Info.PageCount, x.BlankPages, x.VerifiedPages, x.VerifiedAt, x.VerifiedBy, x.VerifiedNote),
+            })
+            .ToList();
 
         var key = (nameOrId ?? "").Trim();
         if (Guid.TryParse(key, out var id))

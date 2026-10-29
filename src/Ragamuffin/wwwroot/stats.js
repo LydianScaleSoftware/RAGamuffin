@@ -62,8 +62,9 @@ async function load() {
     tile("Pages needing OCR", drill(t.pagesNeedingOcr, total, "pages:needs-ocr")),
     tile("Pages not laid out", drill(t.pagesWithoutLayout, total, "pages:no-layout")),
     tile("Estimated time", remaining ? (hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min` : `${hours.toFixed(1)} h`) : "—", "at about 45 s per page"),
-    tile("Pages that look like poor old OCR", drill(t.suspectPages, total, "pages:suspect")),
-    tile("Pages with OCR problems", drill(t.problemPages, total, "pages:problems"), "glm-ocr or layout failed on them; not yet checked by Claude"),
+    tile("Problem pages", drill(t.problemPages, total, "pages:problems"), "text probably wrong or missing; not muted or checked"),
+    tile("Verified pages", fmt(t.verifiedPages), `checked by Claude or you${t.verifiedDocuments ? ` · ${fmt(t.verifiedDocuments)} document${t.verifiedDocuments > 1 ? "s" : ""} verified as a whole` : ""}`),
+    tile("Pages with an old OCR text layer", drill(t.suspectPages, total, "pages:suspect"), "came with the PDF; candidates for re-OCR, not faults"),
     tile("Documents with notices", drill(t.documentsWithNotices, total, "notices")),
     tile("Failed", drill(t.statuses.failed ?? 0, total, "status:failed")),
   ].join("");

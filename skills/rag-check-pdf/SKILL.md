@@ -13,13 +13,22 @@ text the library uses matches the page, and save corrections. The library re-ind
 
 - If the user gave a file path and the PDF isn't in the library yet, add it: `import_file(path, collection)`.
   Wait for indexing (about a minute for a few hundred pages; `list_pages` reports "no pages" until then).
-- `list_documents` and `get_document` show a document's **notice** when its last OCR run had trouble (e.g. "4 pages
-  had OCR or layout problems"). Those pages are the most likely to be wrong: start with
-  `list_pages(document, which="problems")`, which lists each one with what went wrong (glm-ocr failed on some
-  regions and a rougher reading was used, no text found, layout analysis failed).
-- `list_pages(document)` lists every page that needs review, problem pages first: recorded problems, no usable text,
-  embedded text that looks garbled, or pages only glm-ocr has read. `list_pages(document, which="all")` lists every
-  page.
+- `list_documents` and `get_document` show each PDF's **page health**: "N problem pages", "no problems (not
+  verified)" or "verified". Each page has one state:
+  - **problem**: the text is probably wrong or missing (glm-ocr failed on a region, layout failed on a scan, no
+    text on a page with content, garbled text). Start with `list_pages(document, which="problems")`.
+  - **note**: something was skipped but the text is intact (e.g. layout skipped on a rotated page).
+  - **muted**: the user set a problem or note aside in the web UI. Leave muted pages alone unless asked.
+  - **blank**: no text, and the page image is blank too.
+  - **verified**: you checked it (`set_page_text`) or the user marked it correct.
+  - **unverified**: machine-read text nobody has checked, with nothing pointing to a fault.
+- `list_pages(document)` lists the pages that need review: problem pages, then unverified pages only glm-ocr has
+  read. `which="all"` lists every page, and `which="notes"` lists notes and muted items.
+- A PDF that came with its own OCR text layer isn't faulty because of that. To settle it, check a **sample**
+  instead of every page (see step 3).
+- Tell the user how many pages need review before starting a big job. Each page image costs roughly 1,500 tokens,
+  so a few hundred pages is a long session; offer to do a range (`pages="1-50"`), only the problem pages, or a
+  sample check.
 - Tell the user how many pages need review before starting a big job. Each page image costs roughly 1,500 tokens,
   so a few hundred pages is a long session; offer to do a range (`pages="1-50"`) or only the flagged pages.
 
@@ -48,7 +57,19 @@ the document, so it re-indexes once.
 - Describe figures you can't transcribe in one line: `[Figure 10-3: QuickDraw coordinate plane, origin top-left]`.
 - Mark text you can't read as `[illegible]` rather than guessing.
 
-## 3. Finish
+## 3. Verifying a whole document by sample
+
+To give a document a clean bill of health without checking every page:
+
+1. `list_pages(document, which="sample")` picks about 12 unverified pages spread through the document, favouring
+   tables and listings.
+2. Check each one with `get_page`. Confirm it (`confirm: true`) or correct it with `set_page_text`.
+3. If the sample matched (a few small corrections are fine), call `verify_document(document, note)` with a short
+   account, e.g. "12 sampled pages matched; one misread digit in a table corrected". It needs at least 10 checked
+   pages, and the web UI then shows the document as **Verified**.
+4. If many sampled pages were wrong, don't verify. Tell the user, and suggest re-OCR or a full check.
+
+## 4. Finish
 
 Pass `reindex=true` on the last `set_page_text` call. Report what you checked: pages confirmed, pages corrected
-(with the kind of problems found), pages left for later.
+(with the kind of problems found), the document's health afterwards, and pages left for later.

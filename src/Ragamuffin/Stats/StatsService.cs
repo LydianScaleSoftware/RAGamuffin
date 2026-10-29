@@ -52,6 +52,8 @@ public sealed record StatsGroup(
     Dictionary<string, int> Statuses,
     int SuspectPages,
     int ProblemPages,
+    int VerifiedPages,
+    int VerifiedDocuments,
     int Claudomatics,
     long ClaudomaticChars,
     int EncodedDocuments,
@@ -86,7 +88,7 @@ public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.I
 {
     sealed record DocRow(Guid Id, string Name, string Collection, string ContentType, string? Language, string Status, string? Error,
         int PageCount, int EmptyPages, int SuspectPages, int IssuePages, int ChunkCount, long SizeBytes, DateTimeOffset CreatedAt,
-        DateTimeOffset UpdatedAt, string ChunkSource, string? Encoding);
+        DateTimeOffset UpdatedAt, string ChunkSource, string? Encoding, int ProblemPages, int VerifiedPages, bool NoticeMuted, bool Verified);
 
     /// <summary>Per-document figures from the chunks table.</summary>
     sealed record ChunkFacts(long Chars, int Hidden);
@@ -96,7 +98,7 @@ public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.I
         var docs = await db.Documents.AsNoTracking()
             .Select(d => new DocRow(d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.Status, d.Error,
                 d.PageCount, d.EmptyPages, d.SuspectPages, d.IssuePages, d.ChunkCount, d.SizeBytes, d.CreatedAt, d.UpdatedAt,
-                d.ChunkSource, d.Encoding))
+                d.ChunkSource, d.Encoding, d.ProblemPages, d.VerifiedPages, d.NoticeMuted, d.VerifiedAt != null))
             .ToListAsync(ct);
         // Characters per document, and how many of its chunks search leaves out because a conversion covers their pages
         // (the same rule as SearchService).
@@ -187,12 +189,15 @@ public sealed class StatsService(RagDbContext db, Microsoft.Extensions.Options.I
             PdfPages: pdfMix,
             Statuses: Count(docs.Select(d => d.Status)),
             SuspectPages: docs.Sum(d => d.SuspectPages),
-            ProblemPages: docs.Sum(d => d.IssuePages),
+            // Only ready PDFs: a scan waiting for OCR has no text on any page, which isn't a fault yet.
+            ProblemPages: docs.Where(d => d.Status == DocumentStatus.Ready).Sum(d => d.ProblemPages),
+            VerifiedPages: docs.Where(d => d.Status == DocumentStatus.Ready).Sum(d => d.VerifiedPages),
+            VerifiedDocuments: docs.Count(d => d.Status == DocumentStatus.Ready && d.Verified),
             Claudomatics: docs.Where(d => d.ChunkSource == ChunkSources.Claude).Sum(d => d.ChunkCount),
             ClaudomaticChars: docs.Where(d => d.ChunkSource == ChunkSources.Claude).Sum(d => facts.GetValueOrDefault(d.Id)?.Chars ?? 0),
             EncodedDocuments: docs.Count(d => d.Encoding is not null),
             HiddenChunks: docs.Sum(d => facts.GetValueOrDefault(d.Id)?.Hidden ?? 0),
-            DocumentsWithNotices: docs.Count(d => d.Status != DocumentStatus.Failed && d.Status != DocumentStatus.NeedsOcr && d.Error != null),
+            DocumentsWithNotices: docs.Count(d => d.Status != DocumentStatus.Failed && d.Status != DocumentStatus.NeedsOcr && d.Error != null && !d.NoticeMuted),
             AddedLast7Days: docs.Count(d => d.CreatedAt >= DateTimeOffset.UtcNow.AddDays(-7)),
             LastUpdated: docs.Count == 0 ? null : docs.Max(d => d.UpdatedAt));
     }

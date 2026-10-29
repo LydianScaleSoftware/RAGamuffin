@@ -86,6 +86,7 @@ public static class OcrEndpoints
             foreach (var page in pages.Where(p => PdfPages.HasUsefulText(p.EmbeddedText)))
             {
                 page.Source = page.EmbeddedSource;
+                PageHealth.TextChanged(page);
                 reverted++;
             }
             if (reverted == 0) return Results.Conflict("No OCR'd pages have embedded text to revert to.");

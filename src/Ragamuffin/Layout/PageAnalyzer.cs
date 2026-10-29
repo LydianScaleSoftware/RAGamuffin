@@ -61,14 +61,17 @@ public sealed class PageAnalyzer(LayoutClient layout, OcrEngine ocr, IOptions<Ra
     {
         using var rendered = OcrEngine.RenderBitmap(pdf, pageIndex, Opt.Dpi);
         List<WordBox> words;
+        bool upright;
         using (var doc = PdfDocument.Open(pdf))
         {
             var page = doc.GetPage(pageIndex + 1);
             if (page.Rotation.Value != 0) return null;
             words = ToImageSpace(page, rendered.Width, rendered.Height);
+            upright = TextIsUpright(page);
         }
 
-        var (result, regions) = await AnalyzeAsync(rendered, ct);
+        // When the page's own text runs upright, the page is upright: don't let the classifier guess otherwise.
+        var (result, regions) = await AnalyzeAsync(rendered, ct, detectOrientation: !upright);
         if (result.Angle != 0) return null;
 
         // Assign against every region, furniture included, so header and footer words are dropped rather than unplaced.
@@ -96,12 +99,20 @@ public sealed class PageAnalyzer(LayoutClient layout, OcrEngine ocr, IOptions<Ra
     /// Sends a downscaled copy to the layout service (its models resize internally anyway, and full-size pages can
     /// exhaust its memory), then scales the regions back to full-resolution pixels.
     /// </summary>
-    async Task<(LayoutResult Result, List<LayoutRegion> Regions)> AnalyzeAsync(SKBitmap rendered, CancellationToken ct)
+    async Task<(LayoutResult Result, List<LayoutRegion> Regions)> AnalyzeAsync(SKBitmap rendered, CancellationToken ct, bool detectOrientation = true)
     {
         using var small = OcrEngine.Downscale(rendered, Opt.MaxImageEdge);
-        var result = await layout.AnalyzeAsync(OcrEngine.EncodePng(small), ct);
+        var result = await layout.AnalyzeAsync(OcrEngine.EncodePng(small), ct, detectOrientation);
         var scale = rendered.Width / (double)small.Width;
         return (result, result.Regions.Select(r => LayoutAssembler.Scale(r, scale)).ToList());
+    }
+
+    /// <summary>Most of the page's letters run left to right, the right way up.</summary>
+    public static bool TextIsUpright(UglyToad.PdfPig.Content.Page page)
+    {
+        var letters = page.Letters.Where(l => !string.IsNullOrWhiteSpace(l.Value)).ToList();
+        return letters.Count >= Ingestion.PdfPages.MinUsefulChars &&
+               letters.Count(l => l.TextOrientation == UglyToad.PdfPig.Content.TextOrientation.Horizontal) >= letters.Count * 0.8;
     }
 
     /// <summary>The layout service reports the page's rotation; turning it this far clockwise makes it upright.</summary>

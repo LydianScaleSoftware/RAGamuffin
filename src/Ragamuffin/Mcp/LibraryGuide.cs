@@ -102,7 +102,7 @@ public sealed class LibraryGuide(RagDbContext db, IOptions<RagOptions> options, 
             "Reading: search_documents (by meaning and exact words; rephrase in the manual's own terms if it misses), get_chunk for a " +
             "result in full, get_document with pages=/lines=/section= to read around it. Cite document and page or lines.\n" +
             "Adding (when the user asks): import_file adds a file as is; for a PDF, list_pages finds pages to check, get_page shows the " +
-            "page image with its current text, set_page_text saves your corrected text. To convert a manual, write it as Markdown, then " +
+            "page image with its current text, set_page_text saves your corrected text (or confirms it); after checking a sample of pages (list_pages which=\"sample\"), verify_document marks the whole PDF verified. To convert a manual, write it as Markdown, then " +
             "add_document with your own chunks, called Claudomatics (line ranges, each one coherent unit — a section, table, listing with its explanation, " +
             "or whole function — with a title and a search-friendly summary) and source_document= the PDF.\n" +
             "Pass `collection` when one clearly fits; list_collections describes each. Collections marked MUTED (the user's choice, " +

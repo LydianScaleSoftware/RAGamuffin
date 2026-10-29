@@ -28,7 +28,7 @@ public sealed class LibraryWriteTools(RagDbContext db, DocumentReader reader, In
     LocalFiles localFiles, FileStore files, OcrCancellation ocrCancellation)
 {
     /// <summary>Tool names the write switch blocks (set_page_text lives in <see cref="PageTools"/>).</summary>
-    public static readonly HashSet<string> Names = ["import_file", "add_document", "set_chunks", "delete_document", "set_page_text"];
+    public static readonly HashSet<string> Names = ["import_file", "add_document", "set_chunks", "delete_document", "set_page_text", "verify_document"];
 
     [McpServerTool(Name = "import_file", ReadOnly = false, Destructive = false)]
     [Description("Add a file from this computer to the library as it is (PDF, Markdown, text or source code), the same as uploading it in the web UI. The server chunks it; PDFs get their pages extracted for checking with list_pages/get_page. A binary file (ROM, disk image, executable) is stored encoded as a hex dump, up to 1 MB.")]

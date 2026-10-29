@@ -157,10 +157,12 @@ public class PageReviewTests
 {
     [Theory]
     [InlineData(PageSource.Embedded, "Plenty of embedded text on this page.", null, false)]
-    [InlineData(PageSource.Embedded, "Plenty of embedded text on this page.", "garbled", true)]
+    [InlineData(PageSource.Embedded, "Plenty of embedded text on this page.", PageHealth.GarbledReason, true)]
+    // An OCR layer that came with the PDF is settled by checking a sample, not page by page.
+    [InlineData(PageSource.Embedded, "Plenty of embedded text on this page.", "Invisible text over a scanned image (typical of OCR'd scans)", false)]
     [InlineData(PageSource.Ocr, "Plenty of OCR text on this page here.", null, true)]
     [InlineData(PageSource.Embedded, "", null, true)]
-    [InlineData(PageSource.Claude, "Plenty of text Claude checked here.", "garbled", false)]
+    [InlineData(PageSource.Claude, "Plenty of text Claude checked here.", PageHealth.GarbledReason, false)]
     public void Pages_need_review_until_claude_has_checked_them(string source, string text, string? suspect, bool review)
     {
         var page = new DocumentPage { Source = source, EmbeddedText = text, OcrText = text, ClaudeText = text, SuspectReason = suspect };
@@ -192,12 +194,13 @@ public class PageIssueTests
     }
 
     [Fact]
-    public void The_notice_is_rebuilt_from_page_problems()
+    public void The_problems_scope_skips_muted_problems_and_notes()
     {
-        Assert.Null(IngestWorker.IssueNotice([Page(1), Page(2, PageSource.Claude, "x")]));
-        var notice = IngestWorker.IssueNotice([Page(1), Page(11, issue: "x"), Page(25, issue: "y")]);
-        Assert.StartsWith("2 pages had OCR or layout problems (11, 25).", notice);
-        Assert.Contains("list_pages(which=\"problems\")", notice);
+        var muted = Page(2, issue: "x");
+        muted.IssueMuted = true;
+        var note = Page(3, issue: "rotated");
+        note.IssueKind = IssueKinds.Note;
+        Assert.Equal([4], PdfPages.SelectForOcr([Page(1), muted, note, Page(4, issue: "y")], OcrScope.Problems));
     }
 }
 

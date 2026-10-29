@@ -82,8 +82,31 @@ async function loadDocs() {
   if (docs.some(busy)) pollTimer = setTimeout(refresh, 2000);
 }
 
+/** Notes, muted items or a notice from the last run: an ⓘ that opens the health dialog, where they can be muted or unmuted. */
+function infoButton(d) {
+  const items = [];
+  if (d.error) items.push(d.noticeMuted ? "a muted notice" : "a notice from the last run");
+  if (d.notePages) items.push(`${d.notePages} page note${d.notePages > 1 ? "s" : ""}`);
+  if (d.mutedPages) items.push(`${d.mutedPages} muted page${d.mutedPages > 1 ? "s" : ""}`);
+  return items.length
+    ? ` <button type="button" class="info-btn" data-health="${d.id}" title="${esc(items.join(", "))}: click for details" aria-label="Details">ⓘ</button>`
+    : "";
+}
+
+/** A ready PDF's page health: problems, verified, or no problems found. Opens the health dialog. */
+function healthBadge(d) {
+  if (d.contentType !== "pdf") return "";
+  const textPages = d.pageCount - d.blankPages;
+  const [cls, label, tip] = d.problemPages > 0
+    ? ["health-bad", `⚠ ${d.problemPages} problem${d.problemPages > 1 ? "s" : ""}`, "Pages whose text is probably wrong or missing"]
+    : d.verifiedAt || (textPages > 0 && d.verifiedPages >= textPages)
+      ? ["health-ok", "✓ Verified", d.verifiedAt ? `Verified: ${d.verifiedNote ?? ""}` : "Every page checked"]
+      : ["muted-badge", "No problems", "Nothing points to a fault; the text hasn't been checked against the page images"];
+  return ` <button type="button" class="badge ${cls}" data-health="${d.id}" title="${esc(tip)}; click for page health">${label}</button>`;
+}
+
 function statusCell(d) {
-  const notice = d.error ? ` <span class="warn" title="${esc(d.error)}">⚠</span>` : "";
+  const notice = infoButton(d);
   switch (d.status) {
     case "pending":
       return `<span class="status-pending">indexing…</span>`;
@@ -122,10 +145,7 @@ function statusCell(d) {
         badge += ` <button type="button" class="badge muted-badge" data-source-details="${d.id}" title="Converted from another document; click for details">Source…</button>`;
       if (d.convertedTo?.length)
         badge += ` <button type="button" class="badge muted-badge" data-conversion-details="${d.id}" title="Some pages are searched through a conversion; click for details">Conversion${d.convertedTo.length > 1 ? "s" : ""}…</button>`;
-      const empty = d.contentType === "pdf" && d.emptyPages > 0
-        ? ` <span class="badge muted-badge" title="${d.emptyPages} page${d.emptyPages > 1 ? "s have" : " has"} no text; use Re-index… to OCR them">${d.emptyPages} blank</span>`
-        : "";
-      const flair = badge + empty;
+      const flair = healthBadge(d) + badge;
       return `<span class="status-ready">ready</span>${flair ? ` <span class="badges">${flair}</span>` : ""}${notice}`;
     }
   }
@@ -184,7 +204,7 @@ function drillPredicate(filter) {
     case "language": return [(d) => d.contentType === "code" && (d.language ?? "other") === value, `${value} code`];
     case "origin": return [(d) => d.origin === value, ORIGIN_LABELS[value] ?? value];
     case "status": return [value === "busy" ? busy : (d) => d.status === value, `documents ${STATUS_LABELS[value] ?? value}`];
-    case "notices": return [(d) => d.error && d.status !== "failed" && d.status !== "needs_ocr", "documents with notices"];
+    case "notices": return [(d) => d.error && !d.noticeMuted && d.status !== "failed" && d.status !== "needs_ocr", "documents with notices"];
     case "added": return [(d) => Date.now() - new Date(d.createdAt) < Number(value || 7) * 864e5, `added in the last ${value || 7} days`];
     case "pages":
       switch (value) {
@@ -193,7 +213,7 @@ function drillPredicate(filter) {
         case "layout": return [(d) => pdf(d) && d.layoutPages > 0, "PDFs with layout-analyzed pages"];
         case "ocr": return [(d) => pdf(d) && d.ocrPages > 0, "PDFs with OCR'd pages"];
         case "suspect": return [(d) => pdf(d) && d.suspectPages > 0, "PDFs with pages that look like poor old OCR"];
-        case "problems": return [(d) => pdf(d) && d.issuePages > 0, "PDFs with pages that had OCR problems"];
+        case "problems": return [(d) => pdf(d) && d.status === "ready" && d.problemPages > 0, "PDFs with problem pages"];
         case "claude": return [(d) => pdf(d) && d.claudePages > 0, "PDFs with pages checked by Claude"];
       }
   }
@@ -298,8 +318,9 @@ function renderDocs() {
 }
 
 $("docs").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr],[data-source-details],[data-conversion-details]");
+  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr],[data-source-details],[data-conversion-details],[data-health]");
   if (!t) return;
+  if (t.dataset.health) return openHealth(t.dataset.health);
   if (t.dataset.sourceDetails) return showSourceDetails(docs.find((x) => x.id === t.dataset.sourceDetails));
   if (t.dataset.conversionDetails) return showConversionDetails(docs.find((x) => x.id === t.dataset.conversionDetails));
   try {
@@ -651,3 +672,64 @@ $("viewerClose").addEventListener("click", () => $("viewer").close());
 
 checkHealth();
 refresh();
+
+// ---------- page health dialog ----------
+
+let healthDocId = null;
+const pageList = (pages) => pages.map((p) => p.page).join(", ");
+
+async function openHealth(id) {
+  healthDocId = id;
+  const h = await api(`/api/documents/${id}/health`);
+  const by = (state) => h.pages.filter((p) => p.state === state);
+  const problems = by("problem"), notes = by("note"), muted = by("muted"), blank = by("blank");
+  const view = (n) => `<a href="/api/documents/${id}/pages/${n}/image" target="_blank" rel="noopener" title="Open the page image">p.${n}</a>`;
+  const row = (p, actions) => `<li>${view(p.page)} — ${esc(p.text ?? "")} <span class="health-actions">${actions}</span></li>`;
+  const button = (action, pages, label, title) =>
+    `<button type="button" class="secondary small" data-health-action="${action}" data-pages="${pages}" title="${esc(title)}">${label}</button>`;
+  const section = (title, items, render, bulk = "") => items.length
+    ? `<h3>${title} (${items.length}) ${bulk}</h3><ul class="health-list">${items.map(render).join("")}</ul>` : "";
+  const verified = h.verified
+    ? `<p>✓ <strong>Verified</strong> ${h.verified.by === "user" ? "by you" : "by Claude, from a sample"} on ${when(h.verified.at)}${h.verified.note ? `: ${esc(h.verified.note)}` : ""}.
+         ${button("unverify-doc", "", "Clear", "Remove the verification; unchecked pages count as unverified again")}</p>`
+    : `<p>${button("verify-doc", "", "Mark document correct", "Count every unchecked page as verified (e.g. after spot-checking it yourself). Cleared automatically if an OCR or layout run changes the text.")}
+         <span class="muted small">Or ask Claude to check a sample of pages and verify it (list_pages which="sample", then verify_document).</span></p>`;
+
+  showDetails(`Page health: ${h.name.split("/").pop()}`, `
+    <p class="health-summary"><strong>${esc(h.summary.replace(/^./, (c) => c.toUpperCase()))}</strong></p>
+    <p class="muted small">${h.pageCount} pages: ${h.problemPages} problem · ${h.notePages} note · ${h.mutedPages} muted ·
+      ${h.verifiedPages} verified (${h.claudePages} by Claude, ${h.userVerifiedPages} by you) · ${h.blankPages} blank · ${h.unverifiedPages} unverified.
+      ${h.ocrLayerPages ? `${h.ocrLayerPages} pages use an OCR text layer that came with the PDF; that alone isn't a problem.` : ""}</p>
+    ${verified}
+    ${h.notice ? `<h3>Notice from the last run${h.noticeMuted ? " (muted)" : ""}</h3>
+      <p>${esc(h.notice)} ${button(h.noticeMuted ? "unmute-notice" : "mute-notice", "", h.noticeMuted ? "Unmute" : "Mute", "Muted notices no longer show in the list")}</p>` : ""}
+    ${section("Problems", problems,
+      (p) => row(p, button("mute", p.page, "Mute", "Stop counting this as a problem") + button("verify", p.page, "Mark correct", "The text in use is right (it stays marked until the text changes)")),
+      button("mute", pageList(problems), "Mute all", "Stop counting these as problems"))}
+    ${problems.length ? `<p class="muted small">To fix them: Re-index… → replace text with local OCR (${problems.some((p) => p.text?.startsWith("No text")) ? `"Pages without text" for empty pages, ` : ""}"Pages with problems" for the rest), or ask Claude to check them (list_pages which="problems").</p>` : ""}
+    ${section("Notes", notes, (p) => row(p, button("mute", p.page, "Mute", "Hide this note")), button("mute", pageList(notes), "Mute all", "Hide these notes"))}
+    ${section("Muted", muted, (p) => row(p, button("unmute", p.page, "Unmute", "Count it again")), button("unmute", pageList(muted), "Unmute all", "Count these again"))}
+    ${blank.length ? `<h3>Blank pages (${blank.length})</h3><p>${blank.map((p) => view(p.page)).join(", ")}</p>` : ""}`);
+}
+
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-health-action]");
+  if (!b || !healthDocId) return;
+  const pages = String(b.dataset.pages ?? "").split(",").map((n) => parseInt(n, 10)).filter((n) => n > 0);
+  const id = healthDocId;
+  const post = (path, body) => api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  b.disabled = true;
+  try {
+    switch (b.dataset.healthAction) {
+      case "mute": case "unmute": await post(`/api/documents/${id}/pages/mute`, { pages, muted: b.dataset.healthAction === "mute" }); break;
+      case "verify": await post(`/api/documents/${id}/pages/verify`, { pages, verified: true }); break;
+      case "verify-doc": case "unverify-doc": await post(`/api/documents/${id}/verify`, { verified: b.dataset.healthAction === "verify-doc" }); break;
+      case "mute-notice": case "unmute-notice": await post(`/api/documents/${id}/notice/mute`, { muted: b.dataset.healthAction === "mute-notice" }); break;
+    }
+    await openHealth(id);
+    refresh();
+  } catch (err) {
+    alert(err.message);
+    b.disabled = false;
+  }
+});

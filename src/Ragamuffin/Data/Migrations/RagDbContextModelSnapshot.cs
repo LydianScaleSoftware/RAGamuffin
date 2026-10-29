@@ -183,6 +183,10 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<int>("BlankPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("blank_pages");
+
                     b.Property<int>("ChunkCount")
                         .HasColumnType("integer")
                         .HasColumnName("chunk_count");
@@ -240,10 +244,22 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("layout_pages");
 
+                    b.Property<int>("MutedPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("muted_pages");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("name");
+
+                    b.Property<int>("NotePages")
+                        .HasColumnType("integer")
+                        .HasColumnName("note_pages");
+
+                    b.Property<bool>("NoticeMuted")
+                        .HasColumnType("boolean")
+                        .HasColumnName("notice_muted");
 
                     b.Property<DateTimeOffset?>("OcrAt")
                         .HasColumnType("timestamp with time zone")
@@ -268,6 +284,10 @@ namespace Ragamuffin.Data.Migrations
                     b.Property<int>("PageCount")
                         .HasColumnType("integer")
                         .HasColumnName("page_count");
+
+                    b.Property<int>("ProblemPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("problem_pages");
 
                     b.Property<int?>("ProgressDone")
                         .HasColumnType("integer")
@@ -307,6 +327,22 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<DateTimeOffset?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("verified_at");
+
+                    b.Property<string>("VerifiedBy")
+                        .HasColumnType("text")
+                        .HasColumnName("verified_by");
+
+                    b.Property<string>("VerifiedNote")
+                        .HasColumnType("text")
+                        .HasColumnName("verified_note");
+
+                    b.Property<int>("VerifiedPages")
+                        .HasColumnType("integer")
+                        .HasColumnName("verified_pages");
+
                     b.HasKey("Id")
                         .HasName("pk_documents");
 
@@ -328,6 +364,10 @@ namespace Ragamuffin.Data.Migrations
                         .HasColumnName("id");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool?>("Blank")
+                        .HasColumnType("boolean")
+                        .HasColumnName("blank");
 
                     b.Property<DateTimeOffset?>("ClaudeAt")
                         .HasColumnType("timestamp with time zone")
@@ -353,6 +393,14 @@ namespace Ragamuffin.Data.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
                         .HasColumnName("issue");
+
+                    b.Property<string>("IssueKind")
+                        .HasColumnType("text")
+                        .HasColumnName("issue_kind");
+
+                    b.Property<bool>("IssueMuted")
+                        .HasColumnType("boolean")
+                        .HasColumnName("issue_muted");
 
                     b.Property<int?>("LayoutAngle")
                         .HasColumnType("integer")
@@ -398,6 +446,10 @@ namespace Ragamuffin.Data.Migrations
                     b.Property<string>("SuspectReason")
                         .HasColumnType("text")
                         .HasColumnName("suspect_reason");
+
+                    b.Property<DateTimeOffset?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("verified_at");
 
                     b.HasKey("Id")
                         .HasName("pk_document_pages");

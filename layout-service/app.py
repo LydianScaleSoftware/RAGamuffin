@@ -1,6 +1,7 @@
 """Page layout analysis for Ragamuffin, wrapping PaddleOCR's PP-StructureV3.
 
-POST /analyze  (multipart field "image": one rendered page)
+POST /analyze  (multipart field "image": one rendered page; optional field "orientation=false" when the caller knows
+               the page is upright, which skips the orientation classifier)
   -> {"angle", "width", "height", "upright_png" (base64, only when rotated), "regions": [...]}
 
 Each region: {"label", "bbox": [x1, y1, x2, y2], "text", "table": {"html", "cells"} | null}, in reading order.
@@ -16,7 +17,7 @@ import threading
 import time
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from PIL import Image
 
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
@@ -59,17 +60,18 @@ def _reload(reason):
     return pipeline()
 
 
-def _predict(page):
-    """Analyze one page; call with _lock held."""
+def _predict(page, orientation=True):
+    """Analyze one page; call with _lock held. orientation=False skips the orientation classifier (page known upright)."""
     global _pages
     if RECYCLE_PAGES > 0 and _pages >= RECYCLE_PAGES:
         _reload(f"{_pages} pages since the last load")
+    options = {} if orientation else {"use_doc_orientation_classify": False}
     try:
-        res = list(pipeline().predict(page))[0]
+        res = list(pipeline().predict(page, **options))[0]
     except Exception as ex:
         log.exception("Analysis failed; retrying once with freshly loaded models")
         try:
-            res = list(_reload(f"{type(ex).__name__}: {ex}").predict(page))[0]
+            res = list(_reload(f"{type(ex).__name__}: {ex}").predict(page, **options))[0]
         except Exception as retry_ex:
             # Fails on fresh models too, so it's this page. Reload again, so the next page doesn't inherit a broken state.
             _reload("the retry failed as well")
@@ -96,7 +98,7 @@ def health():
 
 # A plain (non-async) endpoint: FastAPI runs it in a worker thread, so /health keeps answering during analysis.
 @app.post("/analyze")
-def analyze(image: UploadFile = File(...)):
+def analyze(image: UploadFile = File(...), orientation: bool = Form(True)):
     data = image.file.read()
     try:
         # Paddle expects BGR, and on some pages it edits the image in place, so give it a writable copy.
@@ -106,7 +108,7 @@ def analyze(image: UploadFile = File(...)):
 
     started = time.time()
     with _lock:
-        res = _predict(page)
+        res = _predict(page, orientation)
     j = res.json["res"] if "res" in res.json else res.json
 
     pre = j.get("doc_preprocessor_res") or {}

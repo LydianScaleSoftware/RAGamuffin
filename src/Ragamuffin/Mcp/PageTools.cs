@@ -24,10 +24,10 @@ public sealed record PageTextInput(
 public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine ocr, FileStore files, IngestQueue queue)
 {
     [McpServerTool(Name = "list_pages", ReadOnly = true)]
-    [Description("List a PDF's pages with where each page's text comes from (embedded, glm-ocr, layout, claude), its length, and any problem from OCR or the reason it looks wrong. Pages with recorded problems come first. Use to find pages to check with get_page.")]
+    [Description("List a PDF's pages with where each page's text comes from (embedded, glm-ocr, layout, claude), its length, and its state: problem (text probably wrong or missing), note (something skipped, text intact), muted (the user set it aside), blank, verified (checked by Claude or the user) or unverified. Starts with the document's health. Use to find pages to check with get_page.")]
     public async Task<string> ListPages(
         [Description("PDF document name (partial names work) or id.")] string document,
-        [Description("\"review\" (default): pages that had OCR or layout problems, are empty, look like poor OCR, or were OCR'd by glm-ocr, and Claude hasn't checked. \"problems\": only pages with a recorded OCR or layout problem. \"all\": every page.")] string? which = null,
+        [Description("\"review\" (default): problem pages, then unverified pages only glm-ocr has read. \"problems\": problem pages only. \"notes\": pages with notes or muted items. \"sample\": about 12 unverified pages spread through the document, favouring tables and listings, to check with get_page and set_page_text before verify_document accepts the rest. \"all\": every page.")] string? which = null,
         [Description("Only these pages, e.g. \"1-100\".")] string? pages = null,
         [Description("Collection, if the name exists in several.")] string? collection = null,
         CancellationToken ct = default)
@@ -39,17 +39,31 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
 
         var all = await db.Pages.AsNoTracking().Where(p => p.DocumentId == id).OrderBy(p => p.Page).ToListAsync(ct);
         if (all.Count == 0) return $"{name} has no pages (it isn't a PDF, or it hasn't been indexed yet).";
-        var mode = which?.Trim().ToLowerInvariant() switch { "all" => "all", "problems" => "problems", _ => "review" };
-        var shown = all.Where(p => p.Page >= range.Start && p.Page <= (range.End ?? int.MaxValue))
-            .Where(p => mode switch { "all" => true, "problems" => PdfPages.HasIssue(p), _ => NeedsReview(p) })
-            // Pages with a recorded problem first: they're the likeliest to be wrong.
-            .OrderBy(p => mode == "all" || !PdfPages.HasIssue(p)).ThenBy(p => p.Page).ToList();
+        var mode = which?.Trim().ToLowerInvariant() switch { "all" => "all", "problems" => "problems", "notes" => "notes", "sample" => "sample", _ => "review" };
+        var inRange = all.Where(p => p.Page >= range.Start && p.Page <= (range.End ?? int.MaxValue)).ToList();
+        var shown = mode == "sample" ? Sample(inRange)
+            : inRange.Where(p => mode switch
+                {
+                    "all" => true,
+                    "problems" => PageHealth.StateOf(p) == PageState.Problem,
+                    "notes" => PageHealth.StateOf(p) is PageState.Note or PageState.Muted,
+                    _ => NeedsReview(p),
+                })
+                // Problem pages first: they're the likeliest to be wrong.
+                .OrderBy(p => mode == "all" || PageHealth.StateOf(p) != PageState.Problem).ThenBy(p => p.Page).ToList();
 
-        var notice = await db.Documents.Where(d => d.Id == id).Select(d => d.Error).SingleAsync(ct);
-        var sb = new StringBuilder($"{name}: {all.Count} pages; {all.Count(NeedsReview)} need review " +
-            $"({all.Count(PdfPages.HasIssue)} with recorded OCR or layout problems), {all.Count(p => p.Source == PageSource.Claude)} checked by Claude.\n");
-        if (notice is not null) sb.Append($"Notice: {notice}\n");
-        sb.Append(mode switch { "all" => "Pages", "problems" => "Pages with problems", _ => "Pages needing review" })
+        var doc = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == id, ct);
+        var states = all.Select(PageHealth.StateOf).ToList();
+        int Count(PageState s) => states.Count(x => x == s);
+        var sb = new StringBuilder($"{name}: {all.Count} pages. Health: {PageHealth.Summary(doc)}. " +
+            $"{Count(PageState.Problem)} problem, {Count(PageState.Note)} note, {Count(PageState.Muted)} muted by the user, " +
+            $"{Count(PageState.Blank)} blank, {Count(PageState.Verified)} verified ({all.Count(p => p.Source == PageSource.Claude)} by Claude), " +
+            $"{Count(PageState.Unverified)} unverified; {all.Count(NeedsReview)} need review.\n");
+        if (doc.Error is not null && !doc.NoticeMuted) sb.Append($"Notice from the last run: {doc.Error}\n");
+        if (mode == "sample")
+            sb.Append("Check each sampled page with get_page; confirm (set_page_text confirm: true) or correct it. If they match, " +
+                      $"verify_document(\"{name}\") records the document's text as verified by sample.\n");
+        sb.Append(mode switch { "all" => "Pages", "problems" => "Problem pages", "notes" => "Pages with notes or muted items", "sample" => "Sample", _ => "Pages needing review" })
             .Append(pages is null ? "" : $" in {pages}").Append($" ({shown.Count}):\n");
         foreach (var p in shown) sb.Append(Describe(p)).Append('\n');
         if (shown.Count > 0) sb.Append($"\nLook at one with get_page(\"{name}\", page=N); save corrected text with set_page_text.");
@@ -153,6 +167,9 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
             saved++;
         }
         await db.SaveChangesAsync(ct);
+        // Health counts change even when the indexed text doesn't (a confirmed page becomes verified).
+        IngestWorker.ApplyPageStats(doc, await db.Pages.Where(p => p.DocumentId == id).ToListAsync(ct));
+        await db.SaveChangesAsync(ct);
 
         var result = $"{name}: saved Claude's text for {saved} page{(saved == 1 ? "" : "s")}" +
                      (confirmed > 0 ? $", confirmed {confirmed} as already correct" : "") +
@@ -177,12 +194,79 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
     }
 
     /// <summary>
-    /// A recorded OCR/layout problem, empty, suspect, or read only by glm-ocr: pages whose text Claude hasn't confirmed
-    /// and may be wrong.
+    /// Pages whose text may be wrong: problems (a recorded OCR or layout problem, no text on a page with content,
+    /// garbled text), plus unverified pages only glm-ocr has read. Muted, blank and verified pages don't need review;
+    /// an old OCR layer that merely looks like one is settled by checking a sample instead.
     /// </summary>
-    public static bool NeedsReview(DocumentPage p) =>
-        p.Source != PageSource.Claude &&
-        (p.Issue is not null || !PdfPages.HasUsefulText(p.EffectiveText) || p.SuspectReason is not null || p.Source == PageSource.Ocr);
+    public static bool NeedsReview(DocumentPage p) => PageHealth.StateOf(p) switch
+    {
+        PageState.Problem => true,
+        PageState.Unverified => p.Source == PageSource.Ocr,
+        _ => false,
+    };
+
+    /// <summary>
+    /// About a dozen unverified pages with text, spread evenly through the document, with tables and listings (the
+    /// pages most likely to be read wrong) swapped in where there are any.
+    /// </summary>
+    public static List<DocumentPage> Sample(IReadOnlyList<DocumentPage> pages, int size = 12)
+    {
+        var candidates = pages.Where(p => PageHealth.StateOf(p) == PageState.Unverified).OrderBy(p => p.Page).ToList();
+        if (candidates.Count <= size) return candidates;
+        var picked = new SortedSet<int>();
+        var spread = size - size / 3;
+        for (var i = 0; i < spread; i++) picked.Add(candidates[(int)((i + 0.5) * candidates.Count / spread)].Page);
+        // Tables and listings, also spread through the document rather than the first few.
+        var hard = candidates.Where(p => !picked.Contains(p.Page) && LooksTabular(p.EffectiveText)).ToList();
+        var wanted = size - picked.Count;
+        for (var i = 0; i < Math.Min(wanted, hard.Count); i++)
+            picked.Add(hard[(int)((i + 0.5) * hard.Count / Math.Min(wanted, hard.Count))].Page);
+        for (var i = 0; picked.Count < size && i < candidates.Count; i += Math.Max(1, candidates.Count / size))
+            picked.Add(candidates[i].Page);
+        return candidates.Where(p => picked.Contains(p.Page)).ToList();
+    }
+
+    /// <summary>Tables, code fences or columns of hex/numbers: the content OCR most often gets wrong.</summary>
+    static bool LooksTabular(string? text)
+    {
+        if (text is null) return false;
+        var lines = text.Split('\n');
+        var tableRows = lines.Count(l => l.TrimStart().StartsWith('|'));
+        var numeric = lines.Count(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries) is { Length: >= 3 } w &&
+                                       w.Count(t => t.All(c => char.IsAsciiHexDigit(c) || c is '$' or ':' or '.')) >= w.Length / 2);
+        return text.Contains("```") || tableRows >= 3 || numeric >= 5;
+    }
+
+    [McpServerTool(Name = "verify_document", ReadOnly = false, Destructive = false)]
+    [Description("Record that a PDF's text is verified as a whole, after checking a sample of its pages (list_pages which=\"sample\") against their images and confirming or correcting each with set_page_text. Its remaining unverified pages then count as verified by sample; the web UI shows the document as Verified. Needs at least 10 pages (or every page of a shorter document) checked by Claude. Use only when the sample matched (a few small corrections are fine); if many sampled pages were wrong, report that instead and suggest re-OCR or a full check.")]
+    public async Task<string> VerifyDocument(
+        [Description("PDF document name (partial names work) or id.")] string document,
+        [Description("What the check found, e.g. \"12 sampled pages matched; one table had a misread digit, corrected\".")] string? note = null,
+        [Description("Collection, if the name exists in several.")] string? collection = null,
+        CancellationToken ct = default)
+    {
+        var (id, name, problem) = await reader.ResolveIdAsync(document, collection, ct);
+        if (id is null) return problem!;
+        var doc = await db.Documents.SingleAsync(d => d.Id == id, ct);
+        if (doc.ContentType != "pdf") return $"{name} isn't a PDF, so it has no pages to verify.";
+        var pages = await db.Pages.AsNoTracking().Where(p => p.DocumentId == id).ToListAsync(ct);
+        var textPages = pages.Count(p => PdfPages.HasUsefulText(p.EffectiveText));
+        var checkedPages = pages.Where(p => p.Source == PageSource.Claude).ToList();
+        var needed = Math.Min(10, textPages);
+        if (checkedPages.Count < needed)
+            return $"{name}: only {checkedPages.Count} page{(checkedPages.Count == 1 ? " is" : "s are")} checked by Claude; check at least {needed} " +
+                   $"first (list_pages(\"{name}\", which=\"sample\") picks them).";
+        var confirmed = checkedPages.Count(p => p.ClaudeNote == "confirmed as correct");
+        var corrected = checkedPages.Count - confirmed;
+        var problems = pages.Count(p => PageHealth.StateOf(p) == PageState.Problem);
+        doc.VerifiedAt = DateTimeOffset.UtcNow;
+        doc.VerifiedBy = "claude";
+        doc.VerifiedNote = $"{checkedPages.Count} pages checked by Claude ({confirmed} confirmed, {corrected} corrected)" +
+                           (string.IsNullOrWhiteSpace(note) ? "" : $": {note.Trim()}");
+        await db.SaveChangesAsync(ct);
+        return $"{name}: text recorded as verified by sample — {doc.VerifiedNote}." +
+               (problems > 0 ? $" {problems} problem page{(problems == 1 ? "" : "s")} still need attention (list_pages which=\"problems\")." : "");
+    }
 
     static string Describe(DocumentPage p)
     {
@@ -194,9 +278,14 @@ public sealed class PageTools(RagDbContext db, DocumentReader reader, OcrEngine 
             _ => "embedded text",
         };
         var text = p.EffectiveText;
-        var sb = new StringBuilder($"- p.{p.Page}: {source}, {(PdfPages.HasUsefulText(text) ? $"{text!.Length:N0} chars" : "no usable text")}");
-        if (p.Issue is not null) sb.Append(p.Source == PageSource.Claude ? $"; had a problem before Claude checked it ({p.Issue})" : $"; PROBLEM: {p.Issue}");
-        if (p.SuspectReason is not null && p.Source != PageSource.Claude) sb.Append($"; embedded text looks wrong ({p.SuspectReason})");
+        var state = PageHealth.StateOf(p);
+        var sb = new StringBuilder($"- p.{p.Page}: {source}, {(PdfPages.HasUsefulText(text) ? $"{text!.Length:N0} chars" : "no usable text")}; {state.ToString().ToLowerInvariant()}");
+        if (state is PageState.Problem or PageState.Muted && PageHealth.ProblemOf(p) is { } what) sb.Append($": {what}");
+        else if (p.Issue is not null && state is PageState.Note or PageState.Muted) sb.Append($": {p.Issue}");
+        else if (p.Issue is not null && state == PageState.Verified) sb.Append($" (had an issue before it was checked: {p.Issue})");
+        if (state == PageState.Muted) sb.Append(" (muted by the user)");
+        if (p.SuspectReason is not null && p.SuspectReason != PageHealth.GarbledReason && p.Source is PageSource.Embedded or PageSource.Layout)
+            sb.Append($"; text layer: {p.SuspectReason}");
         if (p.ClaudeNote is not null) sb.Append($"; Claude's note: {p.ClaudeNote}");
         return sb.ToString();
     }

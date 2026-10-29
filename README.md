@@ -95,7 +95,7 @@ Any other client that speaks MCP over HTTP works too; answers are sized for Clau
 - `get_document(name_or_id, pages?, lines?, section?, collection?)`: with no range, the outline (headings with line or page numbers); `pages="12-14"`, `lines="120-200"` or `section="Drawing Text"` read just that part, ending with where to continue. Partial names work.
 - `list_documents(filter?, collection?)`: names, types, sizes, chunk counts, conversions (which PDF pages a Markdown conversion covers) and notices about OCR or layout problems.
 - `list_collections(collection?)`: what each collection covers (description, keywords), its size and example titles.
-- `list_pages(document, which?, pages?)`: a PDF's pages with their text source and quality. `which="review"` (the default) lists pages that need review, problem pages first; `"problems"` only pages whose last OCR or layout run went wrong, with what went wrong; `"all"` every page.
+- `list_pages(document, which?, pages?)`: a PDF's page health, then its pages with their text source and state (see [Page health](#page-health)). `which="review"` (the default) lists problem pages, then unverified pages only glm-ocr has read; `"problems"` only problem pages, with what's wrong; `"notes"` notes and muted items; `"sample"` about 12 unverified pages spread through the document (favouring tables and listings) for a sample check; `"all"` every page.
 - `get_page(document, page)`: one page as an image beside every text version the server has (embedded, glm-ocr, layout, Claude's), with the one in use marked, any recorded problem, and Claude's note.
 - `ask_library(question, collection?)`: optional, and only offered when `Rag:Mcp:AnswerModel` is set. A local model writes a short, cited answer from the best passages, for agents with small contexts; Claude doesn't need it.
 
@@ -105,6 +105,7 @@ Any other client that speaks MCP over HTTP works too; answers are sized for Clau
 - `set_page_text(document, pages, reindex=true)`: saves Claude's text for PDF pages (from the page images) with a note on what was fixed, or confirms the text in use is right (`confirm: true`). Claude's text becomes the page's source, and a recorded OCR problem on the page no longer counts; the other versions are kept, so it can be removed again. A later glm-ocr run doesn't replace it. Saving several batches with `reindex=false` and the last with `reindex=true` re-indexes once.
 - `add_document(name, chunks, path | content, collection?, source_document?)`: adds a text document, usually Markdown Claude wrote from a PDF, with **chunks Claude chose (Claudomatics)**: line ranges with a title, section, summary, kind, symbol and source pages. A chunk is one unit of any size (a section, a table, a listing with its explanation, a reference entry, a whole function) up to 60,000 characters. With `source_document`, the PDF pages the conversion covers drop out of search, so results aren't duplicated.
 - `set_chunks(document, chunks)`: re-chunks a text document without re-sending it.
+- `verify_document(document, note?)`: after Claude has checked a sample of a PDF's pages against their images (at least 10, or every page of a shorter one), records the whole document's text as **verified by sample**, with what the check found. An OCR or layout run that changes the text clears it.
 - Binary files (ROMs, disk images, executables) given to `import_file` or `add_document` are stored **encoded** as a hex dump (offset, 16 bytes in hex, and their ASCII per line, like `xxd`), up to 1 MB, with the original bytes kept. Everything read from them is marked `⟦ENCODED BINARY · hex dump⟧`, and the web UI shows a **⬢ Encoded · hex** badge. Search finds byte patterns (`a9 00 8d`) and embedded strings; Claude can re-chunk a dump into titled routines or tables with `set_chunks`. The web upload still rejects binaries.
 - `delete_document(document)`: needs the exact name.
 
@@ -150,8 +151,8 @@ When a client connects, the server also sends **instructions** that are added to
 | **⬢ Encoded · hex** | A binary stored as a hex dump (see [Tools that change the library](#tools-that-change-the-library)). |
 | **Source…** | This document is a conversion of another one. Click for a dialog naming the source and the pages it stands in for. |
 | **Conversion…** / **Conversions…** | Some pages of this document are searched through a conversion. Click for a dialog listing each conversion and its pages. |
-| **N blank** | PDF pages with no text yet (use **Re-index…** to OCR them). |
-| ⚠ notice | The last OCR or layout run had problems on some pages; the tooltip says which. |
+| **⚠ N problems** / **✓ Verified** / **No problems** | A PDF's page health (see [Page health](#page-health)). Click for the health dialog. |
+| **ⓘ** | The document has notes, muted items or a notice from its last run. Click for the health dialog, where they can be muted or unmuted. |
 
 The dialogs can be scrolled and have a **Copy** button.
 
@@ -177,7 +178,7 @@ Supported files: Markdown, plain text, source code (about 60 extensions) and PDF
 - **Totals per collection and overall:** documents, PDF pages, chunks, characters indexed, file and database size.
 - **Claude's work:** Claudomatics (with their average size), PDF pages checked by Claude, and chunks left out of search because a conversion covers their pages.
 - **Breakdowns:** document types and code languages; where each document's text comes from (original text, PDF embedded, embedded plus layout, OCR, checked by Claude, mixed, no text yet); PDF pages by text source; status.
-- **Work remaining:** pages needing OCR, pages not yet laid out, with a rough time estimate; pages with OCR problems not yet checked by Claude; pages that look like poor old OCR; documents with notices.
+- **Work remaining:** pages needing OCR, pages not yet laid out, with a rough time estimate; problem pages (not muted or checked); verified pages and documents; pages with an old OCR text layer (re-OCR candidates, not faults); documents with notices (muted notices aren't counted).
 - **Other figures:** the largest documents and which OCR models read how many pages.
 - **Drill-downs:** almost every number links to the Documents page, filtered to the documents it counts (a banner shows the filter, with **Clear filter**). From there, **Select all shown** plus **Process…** or **Re-index…** fixes what the stats revealed.
 
@@ -207,6 +208,9 @@ The web UI uses a JSON API under `/api`, on the same port. It has no authenticat
 | `GET /api/chunks/{id}` · `PUT /api/chunks/{id}` · `DELETE /api/chunks/{id}` | One chunk · change its title or summary (re-embedded) · delete it. |
 | `GET /api/documents/{id}/claudomatic-dates` | When each of a document's Claudomatics was written (the delete dialog uses it to warn about other days). |
 | `GET /api/conversions` · `GET /api/conversions/{sourceId}/zip` | Conversions grouped by source · all of one source's conversions as a zip. |
+| `GET /api/documents/{id}/health` | A PDF's page health: counts per state, the pages with problems, notes, mutes or blanks, the document's verification and its notice. |
+| `POST /api/documents/{id}/pages/mute` · `/pages/verify` | `{"pages": [17, 31], "muted": true}` mutes (or unmutes) those pages' problems or notes · `{"pages": […], "verified": true}` marks their text correct. No pages means every page. |
+| `POST /api/documents/{id}/verify` · `/notice/mute` | `{"verified": true, "note": "…"}` marks the whole document correct (or clears it) · `{"muted": true}` mutes its notice. |
 | `GET /api/stats` | Everything the Stats page shows. |
 | `GET /api/ocr` · `GET /api/layout` | Whether OCR and the layout service are available. |
 | `GET /api/settings/agents` · `PUT /api/settings/agents` | The **Agents read** / **Agents write** switches (`{"enabled": false}`, `{"writes": false}`). |
@@ -227,7 +231,26 @@ How pages are read:
 
 Claude's text, when it has checked a page (see `set_page_text`), takes precedence over all of these.
 
-Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading. Each page records what went wrong in its last run (glm-ocr failing on regions, no text found, layout analysis failing, a rotated page skipped), and the document's notice lists those pages. The notice is rebuilt from the pages on every re-index, so it lasts until the pages are re-run cleanly or Claude checks them (glm-ocr's failures repeat on a re-run, since it reads the same image the same way, so having Claude check those pages is usually the fix); Claude sees it in `list_documents` and `get_document`, and `list_pages(which="problems")` lists the pages.
+Either way, running headers, footers and page numbers are dropped (only when they're short, so a long note at the foot of a page is kept). Headings become Markdown and carry over between pages as section breadcrumbs. Tables become Markdown tables, and text inside figures (diagram labels) is kept as figure text. If glm-ocr fails on one region, that region uses the layout service's own reading. Each page records what went wrong in its last run, and that feeds its health (below). glm-ocr's failures repeat on a re-run, since it reads the same image the same way, so having Claude check those pages is usually the fix.
+
+For a page with its own text, the PDF's letters show which way the text runs. When it runs upright, the layout service isn't asked to guess the page's orientation: its classifier mistakes some figure-heavy pages for upside down.
+
+### Page health
+
+Every PDF page has one state, so a document whose pages are fine can be seen to be fine:
+
+| State | Meaning |
+|---|---|
+| **Problem** | The text is probably wrong or missing: glm-ocr failed on a region, layout failed on a scan, a page with content has no text, or the text is garbled. |
+| **Note** | Something was skipped or unusual, but the text is intact (e.g. layout skipped on a page the PDF itself rotates). |
+| **Muted** | A problem or note you set aside in the health dialog. A new run that records a new issue unmutes it. |
+| **Blank** | No text, and the page image is blank too (checked from a small rendering, ignoring dark scan edges and bindings). |
+| **Verified** | Claude checked it against the image (`set_page_text`), or you marked it correct. Your mark lapses if the page's text changes. |
+| **Unverified** | Machine-read text nobody has checked, with nothing pointing to a fault. That's normal. |
+
+A document's badge shows **⚠ N problems** while any page is a problem, **✓ Verified** when every page with text is verified or the whole document was verified, and **No problems** otherwise. A PDF that came with its own OCR text layer isn't a problem because of that; check a sample instead. In the health dialog you can **Mark document correct**, or ask Claude to check a sample of pages and call `verify_document`. Either way it's cleared when an OCR or layout run, or a new upload, changes the text.
+
+The **health dialog** opens from the badge or the **ⓘ**. It shows the counts for each state, the document's verification, and the notice from the last run (with **Mute**). It lists problem pages (each with **Mute**, **Mark correct** and a link to the page image), notes (**Mute**), muted items (**Unmute**) and blank pages; each list has a bulk button too. None of these change the text, so nothing is re-indexed. Claude sees the same states in `list_documents`, `get_document` and `list_pages`.
 
 **In the UI:**
 - **Status badges.** **OCR** marks pages read by local OCR, and **Layout** marks pages arranged by layout analysis. Their tooltips give counts, model and date. MCP results mark OCR'd passages too.
@@ -245,7 +268,7 @@ Either way, running headers, footers and page numbers are dropped (only when the
 
 **Settings** are under `Rag:Ocr` and `Rag:Layout` (see [Configuration.md](Configuration.md#ocr-ragocr)). Docker needs enough memory for the layout service, about 4–6 GB; 16 GB for Docker Desktop is comfortable.
 
-"Looks like poor OCR" is a heuristic: invisible text over a scanned image, OCR software named in the PDF metadata, or garbled words. It only ranks pages for the dialog and never triggers OCR by itself. Ideas for later are in [Future Plans.md](Future%20Plans.md).
+"Old OCR text layer" (invisible text over a scanned image, or OCR software named in the PDF metadata) only marks pages as candidates for *replace text with local OCR*; it never triggers OCR by itself and isn't a problem. Garbled text is, and it's checked first. Ideas for later are in [Future Plans.md](Future%20Plans.md).
 
 ## How it works
 

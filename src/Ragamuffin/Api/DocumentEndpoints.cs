@@ -30,6 +30,7 @@ public static class DocumentEndpoints
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
+                    d.ProblemPages, d.NotePages, d.MutedPages, d.VerifiedPages, d.BlankPages, d.VerifiedAt, d.VerifiedBy, d.VerifiedNote, d.NoticeMuted,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                     d.ChunkSource, d.Encoding,
                     ClaudePages = db.Pages.Count(p => p.DocumentId == d.Id && p.Source == PageSource.Claude),
@@ -54,6 +55,7 @@ public static class DocumentEndpoints
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
+                    d.ProblemPages, d.NotePages, d.MutedPages, d.VerifiedPages, d.BlankPages, d.VerifiedAt, d.VerifiedBy, d.VerifiedNote, d.NoticeMuted,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                     d.ChunkSource, d.Encoding, d.ClaudePages, d.SourceName,
                     SourcePages = d.SourceName is null ? null : PageRanges(d.SourceSpans),
@@ -87,6 +89,7 @@ public static class DocumentEndpoints
                     d.Id, d.Name, d.Collection, d.ContentType, d.Language, d.SizeBytes, d.Sha256,
                     d.ChunkCount, d.Status, d.Error, d.CreatedAt, d.UpdatedAt, d.Text,
                     d.PageCount, d.OcrPages, d.EmptyPages, d.SuspectPages, d.IssuePages, d.OcrModel, d.OcrAt,
+                    d.ProblemPages, d.NotePages, d.MutedPages, d.VerifiedPages, d.BlankPages, d.VerifiedAt, d.VerifiedBy, d.VerifiedNote, d.NoticeMuted,
                     d.LayoutPages, d.ProgressDone, d.ProgressTotal, d.OcrScope, d.LayoutMode,
                 })
                 .SingleOrDefaultAsync(ct);

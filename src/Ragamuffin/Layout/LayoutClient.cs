@@ -62,7 +62,11 @@ public sealed class LayoutClient(HttpClient http, IOptions<RagOptions> options, 
         return result;
     }
 
-    public async Task<LayoutResult> AnalyzeAsync(byte[] png, CancellationToken ct)
+    /// <param name="detectOrientation">
+    /// false when the page is known to be upright (its embedded text says so): the service's orientation classifier
+    /// then isn't consulted, since it misreads some figure-heavy pages as upside down.
+    /// </param>
+    public async Task<LayoutResult> AnalyzeAsync(byte[] png, CancellationToken ct, bool detectOrientation = true)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(Opt.PageTimeoutSeconds));
@@ -70,6 +74,7 @@ public sealed class LayoutClient(HttpClient http, IOptions<RagOptions> options, 
         var image = new ByteArrayContent(png);
         image.Headers.ContentType = new("image/png");
         form.Add(image, "image", "page.png");
+        if (!detectOrientation) form.Add(new StringContent("false"), "orientation");
         try
         {
             using var resp = await http.PostAsync("analyze", form, timeout.Token);

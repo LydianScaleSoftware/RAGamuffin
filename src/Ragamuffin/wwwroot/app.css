@@ -181,6 +181,19 @@ button.danger-solid { background: var(--bad); color: #fff; }
 .status-ocr { color: var(--accent); }
 td.status { white-space: nowrap; }
 .warn { color: var(--warn); cursor: help; }
+.info-btn {
+  border: 0; background: transparent; color: var(--accent); padding: 0 2px; font-size: 15px; line-height: 1;
+  cursor: pointer; vertical-align: middle;
+}
+.info-btn:hover { color: var(--text); }
+.badge.health-bad { color: var(--bad); }
+.badge.health-ok { color: var(--ok); }
+.health-summary { font-size: 15px; margin: 0 0 4px; }
+.health-list { padding-left: 18px; margin: 4px 0 8px; }
+.health-list li { margin: 3px 0; }
+.health-actions { white-space: nowrap; margin-left: 4px; }
+.health-actions button, #detailsBody h3 button, #detailsBody p button { padding: 1px 8px; font-size: 12px; margin-left: 2px; }
+#detailsBody h3 { font-size: 14px; margin: 14px 0 4px; }
 .badge {
   display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px;
   border: 1px solid currentColor; vertical-align: 1px; cursor: help;

@@ -69,6 +69,7 @@ builder.Services.AddHttpClient<LibraryAnswerer>((sp, http) =>
     http.Timeout = Timeout.InfiniteTimeSpan; // the answerer applies its own timeout
 });
 builder.Services.AddHostedService<IngestWorker>();
+builder.Services.AddHostedService<HealthBackfill>();
 
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = rag.MaxUploadBytes * 10);
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = rag.MaxUploadBytes * 10);
@@ -116,6 +117,7 @@ app.MapRagApi();
 app.MapOcrApi();
 app.MapClaudomaticApi();
 app.MapConversionApi();
+app.MapHealthApi();
 app.MapMcp("/mcp");
 
 app.Run();

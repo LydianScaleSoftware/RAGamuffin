@@ -1,5 +1,14 @@
 namespace Ragamuffin.Data;
 
+public static class IssueKinds
+{
+    /// <summary>The page's text is probably wrong or missing.</summary>
+    public const string Problem = "problem";
+
+    /// <summary>Something was skipped or unusual, but the page keeps usable text.</summary>
+    public const string Note = "note";
+}
+
 public static class PageSource
 {
     public const string Embedded = "embedded";
@@ -49,6 +58,27 @@ public sealed class DocumentPage
     /// cleanly or Claude saves or confirms its text.
     /// </summary>
     public string? Issue { get; set; }
+
+    /// <summary>
+    /// How serious <see cref="Issue"/> is: <see cref="IssueKinds.Problem"/> (the text is probably wrong or missing) or
+    /// <see cref="IssueKinds.Note"/> (something was skipped but the text is intact). Set together with the issue.
+    /// </summary>
+    public string? IssueKind { get; set; }
+
+    /// <summary>
+    /// The user muted this page's problem or note in the web UI: it no longer counts against the document's health.
+    /// Cleared whenever a new run records a new issue.
+    /// </summary>
+    public bool IssueMuted { get; set; }
+
+    /// <summary>True when a page without text is blank in its image too, false when it has content; null = not checked.</summary>
+    public bool? Blank { get; set; }
+
+    /// <summary>
+    /// When the user marked the page's text as correct in the web UI. Cleared when the page's text changes, so the
+    /// mark always refers to the text in use. (Claude's checks are recorded as source "claude" instead.)
+    /// </summary>
+    public DateTimeOffset? VerifiedAt { get; set; }
 
     /// <summary>Text Claude verified or transcribed from the page image (Markdown), or null.</summary>
     public string? ClaudeText { get; set; }
