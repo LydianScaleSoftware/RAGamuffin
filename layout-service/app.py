@@ -8,6 +8,7 @@ Coordinates refer to the upright image. "text" is Paddle's own reading of the re
 as a fallback (it prefers glm-ocr for scans and the PDF's own words for digital pages).
 """
 import base64
+import gc
 import io
 import logging
 import os
@@ -27,6 +28,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 app = FastAPI(title="RAGamuffin layout service")
 _pipe = None
 _lock = threading.Lock()  # one page at a time; the models are not thread-safe and the CPU is the bottleneck
+_pages = 0  # pages analyzed since the models were loaded
+
+# Paddle's predictors can get into a state where every call fails with "RuntimeError: std::exception" (seen after
+# about 900 pages and 11 days, with the container's memory doubled), while /health still says ok. So a failed page
+# reloads the models and is tried once more, and the models are reloaded every RECYCLE_PAGES pages anyway.
+RECYCLE_PAGES = int(os.environ.get("LAYOUT_RECYCLE_PAGES", "500"))
 
 
 def pipeline():
@@ -41,6 +48,34 @@ def pipeline():
         )
         log.info("PP-StructureV3 loaded in %.0fs", time.time() - started)
     return _pipe
+
+
+def _reload(reason):
+    global _pipe, _pages
+    log.warning("Reloading PP-StructureV3: %s", reason)
+    _pipe = None
+    _pages = 0
+    gc.collect()
+    return pipeline()
+
+
+def _predict(page):
+    """Analyze one page; call with _lock held."""
+    global _pages
+    if RECYCLE_PAGES > 0 and _pages >= RECYCLE_PAGES:
+        _reload(f"{_pages} pages since the last load")
+    try:
+        res = list(pipeline().predict(page))[0]
+    except Exception as ex:
+        log.exception("Analysis failed; retrying once with freshly loaded models")
+        try:
+            res = list(_reload(f"{type(ex).__name__}: {ex}").predict(page))[0]
+        except Exception as retry_ex:
+            # Fails on fresh models too, so it's this page. Reload again, so the next page doesn't inherit a broken state.
+            _reload("the retry failed as well")
+            raise HTTPException(status_code=500, detail=f"Layout analysis failed on this page: {type(retry_ex).__name__}: {retry_ex}")
+    _pages += 1
+    return res
 
 
 def _load_models():
@@ -71,7 +106,7 @@ def analyze(image: UploadFile = File(...)):
 
     started = time.time()
     with _lock:
-        res = list(pipeline().predict(page))[0]
+        res = _predict(page)
     j = res.json["res"] if "res" in res.json else res.json
 
     pre = j.get("doc_preprocessor_res") or {}

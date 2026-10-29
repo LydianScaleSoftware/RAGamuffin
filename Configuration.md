@@ -115,7 +115,7 @@ The **Agents read** and **Agents write** switches in the web UI's header aren't 
 |---|---|---|
 | Compose project | `ragamuffin` | |
 | Postgres | container `ragamuffin-postgres`, image `pgvector/pgvector:pg18`, port `127.0.0.1:5432` | `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` (all `rag`) must match `ConnectionStrings:Rag`. Data in volume `ragamuffin_pgdata`. |
-| Layout service | container `ragamuffin-layout`, built from `layout-service/`, port `127.0.0.1:5002` | Models (about 1.8 GB) download on first start into volume `ragamuffin_layout-models`. `LAYOUT_DEVICE` selects `cpu` (default) or `gpu`; GPU use also needs a GPU build of PaddlePaddle in the image and a GPU-enabled Docker host. |
+| Layout service | container `ragamuffin-layout`, built from `layout-service/`, port `127.0.0.1:5002` | Models (about 1.8 GB) download on first start into volume `ragamuffin_layout-models`. `LAYOUT_DEVICE` selects `cpu` (default) or `gpu`; GPU use also needs a GPU build of PaddlePaddle in the image and a GPU-enabled Docker host. `LAYOUT_RECYCLE_PAGES` (default `500`, `0` = never) reloads the models after that many pages, which keeps memory from growing over long batches. Paddle can also get stuck failing every page (`RuntimeError: std::exception`) while `/health` still says ok; when a page fails, the service reloads the models and tries the page once more, so one bad state no longer stops a batch. A page that fails on fresh models too returns 500. Reloading takes about 30–50 seconds. |
 
 Both containers have `restart: unless-stopped`, so they come back with Docker Desktop. The ports are bound to `127.0.0.1` only.
 
