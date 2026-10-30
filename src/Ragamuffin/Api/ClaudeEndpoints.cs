@@ -8,6 +8,7 @@ using Ragamuffin.Mcp;
 namespace Ragamuffin.Api;
 
 public sealed record ClaudeJobRequest(string? Task, string? Pages, string? Instructions);
+public sealed record ClaudeDismissRequest(List<Guid> Ids, bool Dismissed = true);
 
 /// <summary>
 /// Correction jobs for Claude Code: the web UI picks a task for a document (fix problem pages, check pages, check a
@@ -43,6 +44,10 @@ public static class ClaudeEndpoints
 
         api.MapPost("/claude/jobs/{id:guid}/cancel", (Guid id, ClaudeJobs jobs) =>
             jobs.Cancel(id) ? Results.Ok() : Results.Conflict(new { errors = new[] { "That job has already finished." } }));
+
+        // Dismissed jobs move to the older jobs; only finished jobs can be dismissed. Returns how many changed.
+        api.MapPost("/claude/jobs/dismiss", (ClaudeDismissRequest req, ClaudeJobs jobs) =>
+            Results.Ok(new { changed = req.Ids.Count(id => jobs.Dismiss(id, req.Dismissed)) }));
 
         api.MapPost("/documents/{id:guid}/claude", async (Guid id, ClaudeJobRequest req, RagDbContext db, ClaudeJobs jobs,
             IOptions<RagOptions> options, McpSwitch sw, CancellationToken ct) =>
@@ -88,7 +93,7 @@ public static class ClaudeEndpoints
     static object Summary(ClaudeJob j, bool activity) => new
     {
         j.Id, j.DocumentId, j.DocumentName, j.Task, j.Label, j.Pages, j.Instructions, j.Status,
-        j.CreatedAt, j.StartedAt, j.FinishedAt, j.Model, j.SessionId, j.Turns, j.ToolCalls, j.CostUsd, j.Result, j.Error,
+        j.CreatedAt, j.StartedAt, j.FinishedAt, j.Model, j.SessionId, j.Turns, j.ToolCalls, j.CostUsd, j.Result, j.Error, j.Dismissed,
         Last = j.ActivitySnapshot().LastOrDefault(),
         Activity = activity ? j.ActivitySnapshot() : null,
     };

@@ -80,8 +80,14 @@
         <button id="queueCancel" class="small secondary danger">Cancel all</button>
       </div>
       <div id="claudePanel" class="queue claude-jobs" hidden>
-        <div class="row spread"><strong>Claude jobs</strong>
-          <label class="inline"><input type="checkbox" id="claudeShowAll"> show older</label></div>
+        <div class="claude-jobs-head">
+          <button type="button" id="claudeToggle" class="link-button" aria-expanded="true" title="Show or hide the jobs">
+            <span class="caret">▾</span> <strong>Claude jobs</strong> <span id="claudeSummary" class="muted small"></span></button>
+          <span class="row">
+            <button type="button" id="claudeDismissAll" class="small secondary" title="Move every finished job to the older jobs">Dismiss finished</button>
+            <button type="button" id="claudeShowOlder" class="small secondary" aria-pressed="false">Show older</button>
+          </span>
+        </div>
         <ul id="claudeJobs" class="claude-job-list"></ul>
       </div>
       <div class="table-wrap">

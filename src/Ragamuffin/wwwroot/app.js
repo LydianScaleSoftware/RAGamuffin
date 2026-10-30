@@ -784,28 +784,69 @@ async function pollClaude() {
   } else renderDocs();
 }
 
+// The panel lists jobs that haven't been dismissed; dismissed ones are the "older" jobs, shown on request. Collapsing
+// and showing older jobs are remembered per browser.
+const CLAUDE_PANEL_KEY = "ragamuffin.claudePanel";
+const claudePanel = (() => { try { return JSON.parse(storageGet(CLAUDE_PANEL_KEY)) ?? {}; } catch { return {}; } })();
+const saveClaudePanel = () => storageSet(CLAUDE_PANEL_KEY, JSON.stringify(claudePanel));
+const jobLive = (j) => j.status === "queued" || j.status === "running";
+
 function renderClaudeJobs() {
-  const dayAgo = Date.now() - 24 * 3600 * 1000;
-  const all = $("claudeShowAll").checked;
-  const shown = claudeJobs.filter((j) => all || j.status === "queued" || j.status === "running" || new Date(j.finishedAt ?? j.createdAt) > dayAgo).slice(0, all ? 50 : 8);
+  const current = claudeJobs.filter((j) => !j.dismissed);
+  const older = claudeJobs.filter((j) => j.dismissed);
+  const live = current.filter(jobLive).length;
+  if (!older.length) claudePanel.older = false;
   $("claudePanel").hidden = claudeJobs.length === 0;
-  if (!shown.length) { $("claudeJobs").innerHTML = `<li class="muted">No jobs in the last day.</li>`; return; }
+  $("claudePanel").classList.toggle("collapsed", !!claudePanel.collapsed);
+  $("claudeToggle").setAttribute("aria-expanded", String(!claudePanel.collapsed));
+  $("claudeSummary").textContent = [live && `${live} running or queued`, current.length - live && `${current.length - live} finished`,
+    older.length && `${older.length} older`].filter(Boolean).join(" · ");
+  $("claudeDismissAll").hidden = current.length - live === 0;
+  $("claudeShowOlder").hidden = older.length === 0;
+  $("claudeShowOlder").textContent = claudePanel.older ? "Hide older" : `Show older (${older.length})`;
+  $("claudeShowOlder").setAttribute("aria-pressed", String(!!claudePanel.older));
+
+  const shown = claudePanel.older ? [...current, ...older] : current;
+  if (!shown.length) { $("claudeJobs").innerHTML = `<li class="muted">No current jobs.</li>`; return; }
   $("claudeJobs").innerHTML = shown.map((j) => {
-    const live = j.status === "queued" || j.status === "running";
-    const last = j.status === "failed" || j.status === "cancelled" ? j.error : live ? j.last : j.result?.split("\n").find((l) => l.trim());
-    return `<li><span class="job-status ${j.status}">${j.status}</span>
-      <strong>${esc(j.documentName.split("/").pop())}</strong> · ${esc(j.label)}
-      <span class="job-last" title="${esc(last ?? "")}">${esc(last ?? "")}</span>
-      <span class="muted small">${j.costUsd != null ? `$${j.costUsd.toFixed(2)} · ` : ""}${when(j.finishedAt ?? j.startedAt ?? j.createdAt)}</span>
-      <button class="small secondary" data-claude-details="${j.id}">Details</button>
-      ${live ? `<button class="small secondary danger" data-claude-cancel="${j.id}">Cancel</button>` : ""}</li>`;
+    const running = jobLive(j);
+    const last = j.status === "failed" || j.status === "cancelled" ? j.error : running ? j.last : j.result?.split("\n").find((l) => l.trim());
+    const dismiss = running ? `<button class="small secondary danger" data-claude-cancel="${j.id}">Cancel</button>`
+      : j.dismissed ? `<button class="small secondary" data-claude-restore="${j.id}" title="Move back to the current jobs">Restore</button>`
+      : `<button class="job-dismiss" data-claude-dismiss="${j.id}" title="Dismiss: move to the older jobs" aria-label="Dismiss">✕</button>`;
+    return `<li class="${j.dismissed ? "older" : ""}">
+      <div class="job-head">
+        <span class="job-status ${j.status}">${j.status}</span>
+        <span class="job-title" title="${esc(j.documentName)} · ${esc(j.label)}"><strong>${esc(j.documentName.split("/").pop())}</strong> · ${esc(j.label)}</span>
+        <span class="job-meta muted small">${j.costUsd != null ? `$${j.costUsd.toFixed(2)} · ` : ""}${when(j.finishedAt ?? j.startedAt ?? j.createdAt)}</span>
+        <span class="job-buttons"><button class="small secondary" data-claude-details="${j.id}">Details</button>${dismiss}</span>
+      </div>
+      ${last ? `<div class="job-last" title="${esc(last)}">${esc(last)}</div>` : ""}</li>`;
   }).join("");
 }
 
-$("claudeShowAll").addEventListener("change", renderClaudeJobs);
+$("claudeToggle").addEventListener("click", () => {
+  claudePanel.collapsed = !claudePanel.collapsed;
+  saveClaudePanel();
+  renderClaudeJobs();
+});
+
+$("claudeShowOlder").addEventListener("click", () => {
+  claudePanel.older = !claudePanel.older;
+  saveClaudePanel();
+  renderClaudeJobs();
+});
+
+async function dismissClaudeJobs(ids, dismissed = true) {
+  await postJson("/api/claude/jobs/dismiss", { ids, dismissed });
+  await loadClaude();
+}
+
+$("claudeDismissAll").addEventListener("click", () =>
+  dismissClaudeJobs(claudeJobs.filter((j) => !j.dismissed && !jobLive(j)).map((j) => j.id)).catch((err) => alert(err.message)));
 
 $("claudeJobs").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-claude-details],[data-claude-cancel]");
+  const t = e.target.closest("[data-claude-details],[data-claude-cancel],[data-claude-dismiss],[data-claude-restore]");
   if (!t) return;
   try {
     if (t.dataset.claudeCancel) {
@@ -813,6 +854,8 @@ $("claudeJobs").addEventListener("click", async (e) => {
       await api(`/api/claude/jobs/${t.dataset.claudeCancel}/cancel`, { method: "POST" });
       return loadClaude();
     }
+    if (t.dataset.claudeDismiss) return dismissClaudeJobs([t.dataset.claudeDismiss]);
+    if (t.dataset.claudeRestore) return dismissClaudeJobs([t.dataset.claudeRestore], false);
     showClaudeJob(t.dataset.claudeDetails);
   } catch (err) {
     alert(err.message);

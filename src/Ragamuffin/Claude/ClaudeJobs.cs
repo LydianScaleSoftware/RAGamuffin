@@ -32,6 +32,9 @@ public sealed class ClaudeJob
     public string? Error { get; set; }
     public List<string> Activity { get; set; } = [];
 
+    /// <summary>Moved to the older jobs in the web UI.</summary>
+    public bool Dismissed { get; set; }
+
     public bool Finished => Status is "done" or "failed" or "cancelled";
 
     public void Log(string line)
@@ -123,6 +126,21 @@ public sealed class ClaudeJobs
         if (error != null) job.Error ??= error;
         job.FinishedAt = DateTimeOffset.UtcNow;
         if (_cancels.TryRemove(job.Id, out var cts)) cts.Dispose();
+        Save(job);
+        Trim();
+    }
+
+    /// <summary>Moves a finished job to (or back from) the older jobs; false if it's missing or still running.</summary>
+    public bool Dismiss(Guid id, bool dismissed)
+    {
+        if (!_jobs.TryGetValue(id, out var job) || !job.Finished) return false;
+        job.Dismissed = dismissed;
+        Save(job);
+        return true;
+    }
+
+    void Save(ClaudeJob job)
+    {
         try
         {
             File.WriteAllText(Path.Combine(JobsDirectory, $"{job.Id:N}.json"), JsonSerializer.Serialize(job, Json));
@@ -131,7 +149,6 @@ public sealed class ClaudeJobs
         {
             _log.LogWarning("Couldn't save Claude job {Id}: {Error}", job.Id, ex.Message);
         }
-        Trim();
     }
 
     void Load()
