@@ -54,6 +54,10 @@ $("collection").addEventListener("change", () => {
 
 // ---------- documents ----------
 let ocrStatus = { available: false, model: "", reason: "checking…" };
+// Claude Code jobs (see the Claude jobs section below).
+let claudeStatus = { available: false };
+let claudeJobs = [];
+let claudeTimer = null;
 let layoutStatus = { available: false, reason: "checking…" };
 const selected = new Set();
 const busy = (d) => d.status === "pending" || d.status === "ocr";
@@ -145,6 +149,8 @@ function statusCell(d) {
         badge += ` <button type="button" class="badge muted-badge" data-source-details="${d.id}" title="Converted from another document; click for details">Source…</button>`;
       if (d.convertedTo?.length)
         badge += ` <button type="button" class="badge muted-badge" data-conversion-details="${d.id}" title="Some pages are searched through a conversion; click for details">Conversion${d.convertedTo.length > 1 ? "s" : ""}…</button>`;
+      const job = claudeJobFor(d.id);
+      if (job) badge = ` <span class="badge claude-busy" title="${esc(job.label)}: ${esc(job.last ?? job.status)}">Claude ${job.status === "queued" ? "queued" : "working…"}</span>` + badge;
       const flair = healthBadge(d) + badge;
       return `<span class="status-ready">ready</span>${flair ? ` <span class="badges">${flair}</span>` : ""}${notice}`;
     }
@@ -164,7 +170,9 @@ function actionButtons(d) {
     return `<button class="small" data-run-ocr="${d.id}" title="${esc(tip)}" ${ocrStatus.available ? "" : "disabled"}>Run OCR</button>${del}`;
   }
   const label = usesReindexDialog(d) ? "Re-index…" : "Re-index";
-  return `<button class="small secondary" data-reindex="${d.id}" ${d.status === "pending" ? "disabled" : ""}>${label}</button>${del}`;
+  const claude = claudeStatus.available && d.status === "ready"
+    ? `<button class="small secondary" data-claude="${d.id}" title="Have Claude Code check or correct this document">Claude…</button>` : "";
+  return `<button class="small secondary" data-reindex="${d.id}" ${d.status === "pending" ? "disabled" : ""}>${label}</button>${claude}${del}`;
 }
 
 // ---------- drill-down filters (from the Stats page) ----------
@@ -318,8 +326,9 @@ function renderDocs() {
 }
 
 $("docs").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr],[data-source-details],[data-conversion-details],[data-health]");
+  const t = e.target.closest("[data-view],[data-reindex],[data-delete],[data-run-ocr],[data-cancel-ocr],[data-source-details],[data-conversion-details],[data-health],[data-claude]");
   if (!t) return;
+  if (t.dataset.claude) return openClaudeDialog(t.dataset.claude);
   if (t.dataset.health) return openHealth(t.dataset.health);
   if (t.dataset.sourceDetails) return showSourceDetails(docs.find((x) => x.id === t.dataset.sourceDetails));
   if (t.dataset.conversionDetails) return showConversionDetails(docs.find((x) => x.id === t.dataset.conversionDetails));
@@ -369,7 +378,7 @@ $("selectAllDocs").addEventListener("change", (e) => {
 });
 
 async function refresh() {
-  await loadOcrStatus();
+  await Promise.all([loadOcrStatus(), loadClaude()]);
   await Promise.all([loadDocs(), loadCollections(), loadQueue()]);
 }
 
@@ -693,7 +702,12 @@ async function openHealth(id) {
     ? `<p>✓ <strong>Verified</strong> ${h.verified.by === "user" ? "by you" : "by Claude, from a sample"} on ${when(h.verified.at)}${h.verified.note ? `: ${esc(h.verified.note)}` : ""}.
          ${button("unverify-doc", "", "Clear", "Remove the verification; unchecked pages count as unverified again")}</p>`
     : `<p>${button("verify-doc", "", "Mark document correct", "Count every unchecked page as verified (e.g. after spot-checking it yourself). Cleared automatically if an OCR or layout run changes the text.")}
-         <span class="muted small">Or ask Claude to check a sample of pages and verify it (list_pages which="sample", then verify_document).</span></p>`;
+         ${claudeStatus.available ? button("claude-sample", "", "Check a sample with Claude", "Claude checks about 12 pages against their images and, if they match, verifies the document")
+           : `<span class="muted small">Or ask Claude to check a sample of pages and verify it (list_pages which="sample", then verify_document).</span>`}</p>`;
+  const job = claudeJobFor(id);
+  const claudeLine = job
+    ? `<p class="claude-line">Claude: <strong>${esc(job.label)}</strong> — ${esc(job.status)}${job.last ? `: ${esc(job.last)}` : ""}</p>`
+    : claudeStatus.available ? `<p>${button("claude-ask", "", "Ask Claude…", "Have Claude Code check or correct pages, or follow your own instructions")}</p>` : "";
 
   showDetails(`Page health: ${h.name.split("/").pop()}`, `
     <p class="health-summary"><strong>${esc(h.summary.replace(/^./, (c) => c.toUpperCase()))}</strong></p>
@@ -701,12 +715,15 @@ async function openHealth(id) {
       ${h.verifiedPages} verified (${h.claudePages} by Claude, ${h.userVerifiedPages} by you) · ${h.blankPages} blank · ${h.unverifiedPages} unverified.
       ${h.ocrLayerPages ? `${h.ocrLayerPages} pages use an OCR text layer that came with the PDF; that alone isn't a problem.` : ""}</p>
     ${verified}
+    ${claudeLine}
     ${h.notice ? `<h3>Notice from the last run${h.noticeMuted ? " (muted)" : ""}</h3>
       <p>${esc(h.notice)} ${button(h.noticeMuted ? "unmute-notice" : "mute-notice", "", h.noticeMuted ? "Unmute" : "Mute", "Muted notices no longer show in the list")}</p>` : ""}
     ${section("Problems", problems,
-      (p) => row(p, button("mute", p.page, "Mute", "Stop counting this as a problem") + button("verify", p.page, "Mark correct", "The text in use is right (it stays marked until the text changes)")),
+      (p) => row(p, (claudeStatus.available && !job ? button("claude-problems", p.page, "Fix with Claude", "Claude transcribes this page from its image") : "") +
+        button("mute", p.page, "Mute", "Stop counting this as a problem") + button("verify", p.page, "Mark correct", "The text in use is right (it stays marked until the text changes)")),
+      (claudeStatus.available && !job ? button("claude-problems", "", "Fix all with Claude", "Claude transcribes every problem page from its image") : "") +
       button("mute", pageList(problems), "Mute all", "Stop counting these as problems"))}
-    ${problems.length ? `<p class="muted small">To fix them: Re-index… → replace text with local OCR (${problems.some((p) => p.text?.startsWith("No text")) ? `"Pages without text" for empty pages, ` : ""}"Pages with problems" for the rest), or ask Claude to check them (list_pages which="problems").</p>` : ""}
+    ${problems.length ? `<p class="muted small">To fix them: Re-index… → replace text with local OCR (${problems.some((p) => p.text?.startsWith("No text")) ? `"Pages without text" for empty pages, ` : ""}"Pages with problems" for the rest), or ${claudeStatus.available ? "Fix with Claude" : `ask Claude to check them (list_pages which="problems")`}.</p>` : ""}
     ${section("Notes", notes, (p) => row(p, button("mute", p.page, "Mute", "Hide this note")), button("mute", pageList(notes), "Mute all", "Hide these notes"))}
     ${section("Muted", muted, (p) => row(p, button("unmute", p.page, "Unmute", "Count it again")), button("unmute", pageList(muted), "Unmute all", "Count these again"))}
     ${blank.length ? `<h3>Blank pages (${blank.length})</h3><p>${blank.map((p) => view(p.page)).join(", ")}</p>` : ""}`);
@@ -725,11 +742,146 @@ document.addEventListener("click", async (e) => {
       case "verify": await post(`/api/documents/${id}/pages/verify`, { pages, verified: true }); break;
       case "verify-doc": case "unverify-doc": await post(`/api/documents/${id}/verify`, { verified: b.dataset.healthAction === "verify-doc" }); break;
       case "mute-notice": case "unmute-notice": await post(`/api/documents/${id}/notice/mute`, { muted: b.dataset.healthAction === "mute-notice" }); break;
+      case "claude-problems": await startClaude(id, { task: "problems", pages: pages.join(", ") }); break;
+      case "claude-sample": await startClaude(id, { task: "sample" }); break;
+      case "claude-ask": $("detailsDialog").close(); return openClaudeDialog(id);
     }
     await openHealth(id);
     refresh();
   } catch (err) {
     alert(err.message);
     b.disabled = false;
+  }
+});
+
+// ---------- Claude jobs ----------
+// Claude Code runs headless on this Mac (claude -p) with only RAGamuffin's tools; the server builds the prompt.
+
+
+const claudeJobFor = (id) => claudeJobs.find((j) => j.documentId === id && (j.status === "queued" || j.status === "running"));
+
+async function loadClaude() {
+  const [status, jobs] = await Promise.all([
+    api("/api/claude").catch(() => ({ available: false })),
+    api("/api/claude/jobs").catch(() => []),
+  ]);
+  const wasBusy = new Set(claudeJobs.filter((j) => j.status === "queued" || j.status === "running").map((j) => j.id));
+  claudeStatus = status;
+  claudeJobs = jobs;
+  renderClaudeJobs();
+  clearTimeout(claudeTimer);
+  const busy = jobs.some((j) => j.status === "queued" || j.status === "running");
+  if (busy) claudeTimer = setTimeout(pollClaude, 3000);
+  return jobs.some((j) => wasBusy.has(j.id) && !(j.status === "queued" || j.status === "running"));
+}
+
+async function pollClaude() {
+  const finished = await loadClaude();
+  // A finished job changed pages: reload the documents (and an open health dialog) to show it.
+  if (finished) {
+    await loadDocs();
+    if ($("detailsDialog")?.open && healthDocId && $("detailsTitle").textContent.startsWith("Page health")) openHealth(healthDocId);
+  } else renderDocs();
+}
+
+function renderClaudeJobs() {
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  const all = $("claudeShowAll").checked;
+  const shown = claudeJobs.filter((j) => all || j.status === "queued" || j.status === "running" || new Date(j.finishedAt ?? j.createdAt) > dayAgo).slice(0, all ? 50 : 8);
+  $("claudePanel").hidden = claudeJobs.length === 0;
+  if (!shown.length) { $("claudeJobs").innerHTML = `<li class="muted">No jobs in the last day.</li>`; return; }
+  $("claudeJobs").innerHTML = shown.map((j) => {
+    const live = j.status === "queued" || j.status === "running";
+    const last = j.status === "failed" || j.status === "cancelled" ? j.error : live ? j.last : j.result?.split("\n").find((l) => l.trim());
+    return `<li><span class="job-status ${j.status}">${j.status}</span>
+      <strong>${esc(j.documentName.split("/").pop())}</strong> · ${esc(j.label)}
+      <span class="job-last" title="${esc(last ?? "")}">${esc(last ?? "")}</span>
+      <span class="muted small">${j.costUsd != null ? `$${j.costUsd.toFixed(2)} · ` : ""}${when(j.finishedAt ?? j.startedAt ?? j.createdAt)}</span>
+      <button class="small secondary" data-claude-details="${j.id}">Details</button>
+      ${live ? `<button class="small secondary danger" data-claude-cancel="${j.id}">Cancel</button>` : ""}</li>`;
+  }).join("");
+}
+
+$("claudeShowAll").addEventListener("change", renderClaudeJobs);
+
+$("claudeJobs").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-claude-details],[data-claude-cancel]");
+  if (!t) return;
+  try {
+    if (t.dataset.claudeCancel) {
+      if (!confirm("Stop this Claude job? Pages it already saved are kept.")) return;
+      await api(`/api/claude/jobs/${t.dataset.claudeCancel}/cancel`, { method: "POST" });
+      return loadClaude();
+    }
+    showClaudeJob(t.dataset.claudeDetails);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+async function showClaudeJob(id) {
+  const j = await api(`/api/claude/jobs/${id}`);
+  const prompt = await api(`/api/claude/jobs/${id}/prompt`).catch(() => null);
+  const facts = [
+    `Status: ${j.status}`, j.model && `model ${j.model}`, j.turns && `${j.turns} turns`, j.toolCalls && `${j.toolCalls} tool calls`,
+    j.costUsd != null && `$${j.costUsd.toFixed(2)}`,
+  ].filter(Boolean).join(" · ");
+  showDetails(`Claude: ${j.label}`, `
+    <p><strong>${esc(j.documentName)}</strong><br><span class="muted small">${esc(facts)} · started ${when(j.startedAt ?? j.createdAt)}${j.finishedAt ? `, finished ${when(j.finishedAt)}` : ""}</span></p>
+    ${j.error ? `<p class="status-failed">${esc(j.error)}</p>` : ""}
+    ${j.result && !j.error?.startsWith(j.result.trim()) ? `<h3>Claude's report</h3><pre class="claude-log">${esc(j.result)}</pre>` : ""}
+    ${j.instructions ? `<h3>Your instructions</h3><pre class="claude-log">${esc(j.instructions)}</pre>` : ""}
+    <h3>Activity</h3><pre class="claude-log">${esc((j.activity ?? []).join("\n") || "(nothing yet)")}</pre>
+    ${prompt ? `<details><summary>Prompt sent to Claude Code</summary><pre class="claude-log">${esc(prompt)}</pre></details>` : ""}
+    ${j.sessionId ? `<p class="muted small">To continue this conversation yourself: <code>cd data/claude && claude --resume ${esc(j.sessionId)}</code></p>` : ""}`);
+}
+
+async function startClaude(id, request) {
+  await postJson(`/api/documents/${id}/claude`, request);
+  await loadClaude();
+  renderDocs();
+}
+
+let claudeDocId = null;
+
+async function openClaudeDialog(id) {
+  const d = docs.find((x) => x.id === id);
+  if (!d) return;
+  claudeDocId = id;
+  const pdf = d.contentType === "pdf";
+  $("claudeTitle").textContent = d.name.split("/").pop();
+  document.querySelectorAll("#claudeTasks .pdf-only").forEach((l) => l.hidden = !pdf);
+  const pick = pdf ? (d.problemPages > 0 ? "problems" : "sample") : "custom";
+  document.querySelector(`input[name="claudeTask"][value="${pick}"]`).checked = true;
+  $("claudeProblemsHint").textContent = d.problemPages > 0
+    ? `${d.problemPages} page${d.problemPages > 1 ? "s" : ""} with no text, garbled text, or a region the OCR model failed on.`
+    : "None right now. Pages with no text, garbled text, or a region the OCR model failed on.";
+  $("claudePages").value = "";
+  $("claudeInstructions").value = "";
+  const warn = !claudeStatus.agentsCanWrite ? "Agents read and Agents write are off, so Claude couldn't save anything. Turn them on first." : "";
+  $("claudeWarning").textContent = warn;
+  $("claudeWarning").hidden = !warn;
+  updateClaudeDialog();
+  $("claudeDialog").returnValue = "";
+  $("claudeDialog").showModal();
+}
+
+function updateClaudeDialog() {
+  const task = document.querySelector('input[name="claudeTask"]:checked').value;
+  $("claudePagesRow").hidden = task === "sample" || task === "custom";
+  $("claudePages").required = task === "pages";
+  $("claudePages").placeholder = task === "pages" ? "e.g. 12, 40-45" : "e.g. 1-100 (empty: all)";
+  $("claudeInstructions").required = task === "custom";
+}
+
+document.querySelectorAll('input[name="claudeTask"]').forEach((r) => r.addEventListener("change", updateClaudeDialog));
+
+$("claudeDialog").addEventListener("close", async () => {
+  if ($("claudeDialog").returnValue !== "confirm" || !claudeDocId) return;
+  const task = document.querySelector('input[name="claudeTask"]:checked').value;
+  try {
+    await startClaude(claudeDocId, { task, pages: $("claudePagesRow").hidden ? null : $("claudePages").value, instructions: $("claudeInstructions").value });
+  } catch (err) {
+    alert(err.message);
   }
 });

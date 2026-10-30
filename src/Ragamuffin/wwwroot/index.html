@@ -79,6 +79,11 @@
         <div><strong>Processing queue</strong> <span id="queueText"></span></div>
         <button id="queueCancel" class="small secondary danger">Cancel all</button>
       </div>
+      <div id="claudePanel" class="queue claude-jobs" hidden>
+        <div class="row spread"><strong>Claude jobs</strong>
+          <label class="inline"><input type="checkbox" id="claudeShowAll"> show older</label></div>
+        <ul id="claudeJobs" class="claude-job-list"></ul>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -131,6 +136,34 @@
       <div class="row end">
         <button value="cancel" class="secondary" formnovalidate>Cancel</button>
         <button value="confirm">Start</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="claudeDialog">
+    <form method="dialog" id="claudeForm">
+      <h2>Ask Claude <span id="claudeTitle" class="muted"></span></h2>
+      <p class="hint">Claude Code runs on this Mac in the background, with only RAGamuffin's tools. It compares pages with
+        their images and saves its corrections; progress shows under Claude jobs above the documents.</p>
+      <div id="claudeTasks">
+        <label class="choice pdf-only"><input type="radio" name="claudeTask" value="problems" checked>
+          <span><strong>Fix problem pages</strong><br><span class="hint" id="claudeProblemsHint">Pages with no text, garbled text, or a region the OCR model failed on.</span></span></label>
+        <label class="choice pdf-only"><input type="radio" name="claudeTask" value="pages">
+          <span><strong>Check specific pages</strong><br><span class="hint">Compare them with their images and correct anything wrong.</span></span></label>
+        <label class="choice pdf-only"><input type="radio" name="claudeTask" value="review">
+          <span><strong>Check pages needing review</strong><br><span class="hint" id="claudeReviewHint">Problems, then every page only the OCR model has read. Can take a long time.</span></span></label>
+        <label class="choice pdf-only"><input type="radio" name="claudeTask" value="sample">
+          <span><strong>Check a sample and verify</strong><br><span class="hint">About 12 pages spread through the document; if they match, the document is marked verified.</span></span></label>
+        <label class="choice"><input type="radio" name="claudeTask" value="custom">
+          <span><strong>Your own instructions</strong><br><span class="hint">Anything else, e.g. "re-chunk the listing on pages 40–52 into one chunk per routine".</span></span></label>
+      </div>
+      <label class="field" id="claudePagesRow">Pages <input id="claudePages" placeholder="e.g. 12, 40-45 (empty: all)"></label>
+      <label class="field">Instructions for Claude <span class="muted">(optional, added to the task)</span>
+        <textarea id="claudeInstructions" rows="4" placeholder="e.g. The tables on these pages are 6502 opcodes; keep the hex exactly as printed."></textarea></label>
+      <p id="claudeWarning" class="status-failed small" hidden></p>
+      <div class="row end">
+        <button value="cancel" class="secondary" formnovalidate>Cancel</button>
+        <button value="confirm" id="claudeStart">Start</button>
       </div>
     </form>
   </dialog>

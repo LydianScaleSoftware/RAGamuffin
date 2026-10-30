@@ -109,6 +109,23 @@ Token budgets are estimated at about 3.5 characters per token and sized for Clau
 
 The **Agents read** and **Agents write** switches in the web UI's header aren't configuration settings: they're stored in the database (`settings` table, keys `mcp.enabled` and `mcp.write`) and changed from the UI or with `PUT /api/settings/agents` and `{"enabled": false}` or `{"writes": false}`.
 
+## Claude jobs (`Rag:Claude`)
+
+Corrections started from the web UI (**Claude…**, **Fix with Claude**) run Claude Code headless: `claude -p <prompt> --output-format stream-json --mcp-config <this server> --strict-mcp-config --tools Skill --allowedTools <library tools>`.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `Enabled` | `true` | Off hides the Claude buttons and refuses new jobs. |
+| `Command` | *(empty)* | The `claude` command. Empty uses `~/.local/bin/claude` (the native installer's location), else `claude` on the PATH. The service runs under launchd with a short PATH, so give a full path if Claude Code is installed elsewhere. |
+| `Model` | `opus` (appsettings.json) | Passed to `--model` (e.g. `sonnet`, `opus`). Empty uses Claude Code's own default, which may be Haiku: too weak for reading page images. |
+| `McpUrl` | `http://localhost:5077/mcp` | The MCP endpoint the job connects to: this service. Change it with `Urls`. |
+| `WorkingDirectory` | `claude` | Where Claude Code runs and finished jobs are saved (`jobs/`). Relative paths resolve against the folder holding `FilesDirectory`, so `data/claude`. `claude --resume <session>` from there continues a job's conversation. |
+| `TimeoutMinutes` | `360` | A job running longer is stopped. Pages it saved are kept. |
+| `MaxBudgetUsd` | *(none)* | Passed to `--max-budget-usd`. Applies only when Claude Code bills an API key. |
+| `KeepJobs` | `100` | Finished jobs kept for the web UI. Older ones are deleted. |
+
+Jobs use the login of the account the service runs as: run `claude` once in a terminal and `/login` if a job reports an expired session. They obey the **Agents read/write** switches.
+
 ## Docker services (`docker-compose.yml`)
 
 | Item | Value | Notes |

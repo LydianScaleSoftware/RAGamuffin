@@ -36,6 +36,37 @@ public sealed class RagOptions
     public LayoutOptions Layout { get; set; } = new();
     public CollectionOptions Collections { get; set; } = new();
     public McpOptions Mcp { get; set; } = new();
+    public ClaudeOptions Claude { get; set; } = new();
+}
+
+/// <summary>Correction jobs the web UI hands to Claude Code, which runs headless (claude -p) with the library's tools.</summary>
+public sealed class ClaudeOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>The claude command. Empty looks in ~/.local/bin, then the PATH.</summary>
+    public string Command { get; set; } = "";
+
+    /// <summary>Model alias or id passed to --model, e.g. "sonnet" or "opus". Empty uses Claude Code's default.</summary>
+    public string Model { get; set; } = "";
+
+    /// <summary>The MCP endpoint Claude Code connects to; this service's own /mcp.</summary>
+    public string McpUrl { get; set; } = "http://localhost:5077/mcp";
+
+    /// <summary>
+    /// Folder Claude Code runs in, and where finished jobs are kept. Relative paths resolve against the folder that
+    /// holds FilesDirectory (so data/claude by default).
+    /// </summary>
+    public string WorkingDirectory { get; set; } = "claude";
+
+    /// <summary>Stop a job that runs longer than this.</summary>
+    public int TimeoutMinutes { get; set; } = 360;
+
+    /// <summary>Passed to --max-budget-usd when set. Only applies when Claude Code bills an API key.</summary>
+    public decimal? MaxBudgetUsd { get; set; }
+
+    /// <summary>Finished jobs kept for the web UI.</summary>
+    public int KeepJobs { get; set; } = 100;
 }
 
 public sealed class CollectionOptions

@@ -120,6 +120,28 @@ The two skills in `skills/` tell Claude how to do the work well, so you can just
 
 Page images cost roughly 1,500 tokens each, so a few hundred pages is a long session; the skills say so before starting.
 
+### Claude jobs: corrections from the web UI
+
+You don't have to open Claude Code and type a prompt to get corrections made. The web UI can start **Claude Code headless** on this Mac (`claude -p`) with a prompt it writes for the task, and show its progress:
+
+- **Claude…** on a document row opens **Ask Claude**, with these tasks:
+  - **Fix problem pages**: all of them, or the pages you list. These are pages with no text, garbled text, or a region glm-ocr failed on.
+  - **Check specific pages**: compare them with their images and correct them.
+  - **Check pages needing review**: problems, then every page only glm-ocr has read. This can be a long run.
+  - **Check a sample and verify**: about 12 pages, then `verify_document` if they match.
+  - **Your own instructions**, for anything else, on any document (e.g. re-chunk a listing).
+
+  Any task can take extra instructions, which are added to the prompt.
+- **The health dialog** has **Fix with Claude** on each problem page, **Fix all with Claude**, **Check a sample with Claude** and **Ask Claude…**.
+- **The Claude jobs panel** above the documents shows each job's status, its latest step (e.g. `→ get_page p.42`) and cost, with **Cancel**. **Details** shows the activity log, Claude's closing report, your instructions, the exact prompt, and a `claude --resume` command to continue the conversation yourself. While a job runs, its document shows a **Claude working…** badge, and the list refreshes when it finishes.
+
+How the jobs run:
+- **One at a time**, in `data/claude`. A document can't have two jobs queued.
+- **Limited tools.** Claude gets only RAGamuffin's reading tools, `list_pages`/`get_page`, `set_page_text`, `verify_document` and `set_chunks`, plus the Skill tool so `rag-check-pdf` loads. It has no shell, no file access, and can't delete or import.
+- **Needs the Agents read and Agents write switches on**, so that Claude can save its work.
+- **Uses your Claude Code login** (subscription or API key), so it counts against your usage like any session. If the login has expired, the job fails with a message to run `claude` in a terminal and type `/login`.
+- **Kept after they finish.** Finished jobs are saved in `data/claude/jobs` (the newest 100). Settings are under `Rag:Claude` ([Configuration.md](Configuration.md#claude-jobs-ragclaude)).
+
 ### Switches
 
 The page header has two switches, stored in the database:
@@ -211,6 +233,9 @@ The web UI uses a JSON API under `/api`, on the same port. It has no authenticat
 | `GET /api/documents/{id}/health` | A PDF's page health: counts per state, the pages with problems, notes, mutes or blanks, the document's verification and its notice. |
 | `POST /api/documents/{id}/pages/mute` · `/pages/verify` | `{"pages": [17, 31], "muted": true}` mutes (or unmutes) those pages' problems or notes · `{"pages": […], "verified": true}` marks their text correct. No pages means every page. |
 | `POST /api/documents/{id}/verify` · `/notice/mute` | `{"verified": true, "note": "…"}` marks the whole document correct (or clears it) · `{"muted": true}` mutes its notice. |
+| `GET /api/claude` | Whether Claude jobs can run (command found, agents may write). |
+| `POST /api/documents/{id}/claude` | Start a Claude job: `{"task": "problems" \| "pages" \| "review" \| "sample" \| "custom", "pages": "12, 40-45", "instructions": "…"}`. |
+| `GET /api/claude/jobs?documentId=` · `GET /api/claude/jobs/{id}` · `/prompt` · `POST …/cancel` | Jobs, newest first · one job with its activity log · the prompt it was given · stop it. |
 | `GET /api/stats` | Everything the Stats page shows. |
 | `GET /api/ocr` · `GET /api/layout` | Whether OCR and the layout service are available. |
 | `GET /api/settings/agents` · `PUT /api/settings/agents` | The **Agents read** / **Agents write** switches (`{"enabled": false}`, `{"writes": false}`). |
@@ -248,9 +273,9 @@ Every PDF page has one state, so a document whose pages are fine can be seen to 
 | **Verified** | Claude checked it against the image (`set_page_text`), or you marked it correct. Your mark lapses if the page's text changes. |
 | **Unverified** | Machine-read text nobody has checked, with nothing pointing to a fault. That's normal. |
 
-A document's badge shows **⚠ N problems** while any page is a problem, **✓ Verified** when every page with text is verified or the whole document was verified, and **No problems** otherwise. A PDF that came with its own OCR text layer isn't a problem because of that; check a sample instead. In the health dialog you can **Mark document correct**, or ask Claude to check a sample of pages and call `verify_document`. Either way it's cleared when an OCR or layout run, or a new upload, changes the text.
+A document's badge shows **⚠ N problems** while any page is a problem, **✓ Verified** when every page with text is verified or the whole document was verified, and **No problems** otherwise. A PDF that came with its own OCR text layer isn't a problem because of that; check a sample instead. In the health dialog you can **Mark document correct**, or have Claude check a sample of pages and call `verify_document` (**Check a sample with Claude**). Either way it's cleared when an OCR or layout run, or a new upload, changes the text.
 
-The **health dialog** opens from the badge or the **ⓘ**. It shows the counts for each state, the document's verification, and the notice from the last run (with **Mute**). It lists problem pages (each with **Mute**, **Mark correct** and a link to the page image), notes (**Mute**), muted items (**Unmute**) and blank pages; each list has a bulk button too. None of these change the text, so nothing is re-indexed. Claude sees the same states in `list_documents`, `get_document` and `list_pages`.
+The **health dialog** opens from the badge or the **ⓘ**. It shows the counts for each state, the document's verification, and the notice from the last run (with **Mute**). It lists problem pages (each with **Fix with Claude**, **Mute**, **Mark correct** and a link to the page image), notes (**Mute**), muted items (**Unmute**) and blank pages; each list has a bulk button too. None of these change the text, so nothing is re-indexed. Claude sees the same states in `list_documents`, `get_document` and `list_pages`.
 
 **In the UI:**
 - **Status badges.** **OCR** marks pages read by local OCR, and **Layout** marks pages arranged by layout analysis. Their tooltips give counts, model and date. MCP results mark OCR'd passages too.

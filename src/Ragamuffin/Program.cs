@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using Ragamuffin;
 using Ragamuffin.Api;
+using Ragamuffin.Claude;
 using Ragamuffin.Collections;
 using Ragamuffin.Data;
 using Ragamuffin.Embeddings;
@@ -70,6 +71,8 @@ builder.Services.AddHttpClient<LibraryAnswerer>((sp, http) =>
 });
 builder.Services.AddHostedService<IngestWorker>();
 builder.Services.AddHostedService<HealthBackfill>();
+builder.Services.AddSingleton<ClaudeJobs>();
+builder.Services.AddHostedService<ClaudeRunner>();
 
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = rag.MaxUploadBytes * 10);
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = rag.MaxUploadBytes * 10);
@@ -118,6 +121,7 @@ app.MapOcrApi();
 app.MapClaudomaticApi();
 app.MapConversionApi();
 app.MapHealthApi();
+app.MapClaudeApi();
 app.MapMcp("/mcp");
 
 app.Run();
