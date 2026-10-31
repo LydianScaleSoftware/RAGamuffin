@@ -10,6 +10,11 @@
   --warn: #b45309;
   --bad: #b91c1c;
   --code-bg: #f3f4f6;
+  --type-pdf: #c2410c;
+  --type-markdown: #2563eb;
+  --type-text: #4b5563;
+  --type-code: #7c3aed;
+  --type-other: #6b7280;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +30,11 @@
     --warn: #fbbf24;
     --bad: #f87171;
     --code-bg: #0f1115;
+    --type-pdf: #fb923c;
+    --type-markdown: #60a5fa;
+    --type-text: #cbd5e1;
+    --type-code: #c4b5fd;
+    --type-other: #9aa1ab;
     color-scheme: dark;
   }
 }
@@ -77,6 +87,11 @@ button, .button {
 button.secondary, .button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
 button.small { padding: 2px 8px; font-size: 12px; }
 button.danger { color: var(--bad); }
+button.icon-button { padding: 3px 5px; line-height: 0; }
+button.icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+button.claude-button { color: #d97757; }
+button.claude-button svg { stroke-width: 1.7; }
+button.delete-button { color: var(--bad); }
 button:disabled { opacity: .5; cursor: default; }
 
 .drop {
@@ -163,6 +178,17 @@ textarea {
 }
 #createForm .hint { margin: 0; }
 th.check, td.check { width: 32px; }
+th.type, td.type { width: 1%; text-align: center; }
+.type-icon { display: inline-flex; vertical-align: middle; width: 26px; height: 22px; align-items: center; justify-content: center;
+  border: 1px solid currentColor; border-radius: 6px; cursor: default; }
+.type-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.type-icon text { fill: currentColor; stroke: none; font: 700 3.6px/1 -apple-system, sans-serif; }
+.type-icon circle { fill: currentColor; }
+.type-pdf { color: var(--type-pdf); }
+.type-markdown { color: var(--type-markdown); }
+.type-text { color: var(--type-text); }
+.type-code { color: var(--type-code); }
+.type-other { color: var(--type-other); }
 input.rename { width: 100%; min-width: 180px; background: transparent; border-color: transparent; }
 input.rename:hover, input.rename:focus { border-color: var(--border); background: var(--bg); }
 input.rename.changed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }

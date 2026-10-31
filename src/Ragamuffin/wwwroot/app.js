@@ -161,8 +161,20 @@ function statusCell(d) {
 // before OCR existed) just gets a plain re-index, which analyzes it.
 const usesReindexDialog = (d) => d.contentType === "pdf" && d.pageCount > 0;
 
+// Icons for the row action buttons.
+const actionIcons = {
+  reindex: `<ellipse cx="7" cy="3.5" rx="5" ry="2"/><path d="M2 3.5v8c0 1.1 2.2 2 5 2M12 3.5V7M2 7.5c0 1.1 2.2 2 5 2"/><path d="M14.5 10.5a2.8 2.8 0 1 1-.8-2l.8.8M14.5 7.5v1.8h-1.8"/>`,
+  claude: Array.from({ length: 12 }, (_, i) => {
+    const a = (i * 30 + 8) * Math.PI / 180, r = [6.5, 5, 6, 4.8][i % 4];
+    return `<path d="M8 8L${(8 + r * Math.cos(a)).toFixed(2)} ${(8 + r * Math.sin(a)).toFixed(2)}"/>`;
+  }).join(""),
+  delete: `<path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/>`,
+};
+const iconButton = (kind, attrs, title, extra = "") =>
+  `<button class="small secondary icon-button ${kind}-button" ${attrs} title="${esc(title)}" aria-label="${esc(title)}" ${extra}><svg viewBox="0 0 16 16" aria-hidden="true">${actionIcons[kind]}</svg></button>`;
+
 function actionButtons(d) {
-  const del = `<button class="small secondary danger" data-delete="${d.id}">Delete</button>`;
+  const del = iconButton("delete", `data-delete="${d.id}"`, "Delete");
   if (d.status === "ocr")
     return `<button class="small secondary" data-cancel-ocr="${d.id}">Cancel OCR</button>${del}`;
   if (d.status === "needs_ocr") {
@@ -171,8 +183,8 @@ function actionButtons(d) {
   }
   const label = usesReindexDialog(d) ? "Re-index…" : "Re-index";
   const claude = claudeStatus.available && d.status === "ready"
-    ? `<button class="small secondary" data-claude="${d.id}" title="Have Claude Code check or correct this document">Claude…</button>` : "";
-  return `<button class="small secondary" data-reindex="${d.id}" ${d.status === "pending" ? "disabled" : ""}>${label}</button>${claude}${del}`;
+    ? iconButton("claude", `data-claude="${d.id}"`, "Claude… (have Claude Code check or correct this document)") : "";
+  return `${iconButton("reindex", `data-reindex="${d.id}"`, label, d.status === "pending" ? "disabled" : "")}${claude}${del}`;
 }
 
 // ---------- drill-down filters (from the Stats page) ----------
@@ -301,6 +313,20 @@ document.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("cl
 }));
 $("clearSort").addEventListener("click", () => setSort(null));
 
+// A small icon for a document's type, with the type (and language) in its tooltip.
+const typeIcons = {
+  pdf: `<path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13"/><text x="8.5" y="12.2" text-anchor="middle">PDF</text>`,
+  markdown: `<rect x="1" y="3.5" width="14" height="9" rx="1.5"/><path d="M3.5 10.5v-5l2 2.5 2-2.5v5M11 5.5v5m-1.8-1.8L11 10.5l1.8-1.8"/>`,
+  text: `<path d="M3.5 1.5h9v13h-9z"/><path d="M5.5 5h5M5.5 7.5h5M5.5 10h3.5"/>`,
+  code: `<path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4M9 3 7 13"/>`,
+  other: `<path d="M3.5 1.5h6L12.5 4.5v10h-9z"/><path d="M9.5 1.5v3h3"/><circle cx="8" cy="10" r=".6"/>`,
+};
+function typeBadge(d) {
+  const kind = typeIcons[d.contentType] ? d.contentType : "other";
+  const label = d.contentType === "code" && d.language ? `code (${d.language})` : (d.language ?? d.contentType ?? "unknown");
+  return `<span class="type-icon type-${kind}" title="${esc(label)}" aria-label="${esc(label)}" role="img"><svg viewBox="0 0 16 16" aria-hidden="true">${typeIcons[kind]}</svg></span>`;
+}
+
 function renderDocs() {
   const col = $("filterCollection").value;
   const name = $("filterName").value.toLowerCase();
@@ -314,9 +340,9 @@ function renderDocs() {
     : rows.map((d) => `
       <tr>
         <td class="check">${d.contentType === "pdf" ? `<input type="checkbox" class="pick" data-id="${d.id}" ${selected.has(d.id) ? "checked" : ""}>` : ""}</td>
+        <td class="type">${typeBadge(d)}</td>
         <td class="name"><a data-view="${d.id}">${esc(d.name)}</a></td>
         <td>${esc(collectionLabel(d.collection))}</td>
-        <td>${esc(d.language ?? d.contentType)}</td>
         <td class="num">${size(d.sizeBytes)}</td>
         <td class="num">${d.chunkCount}</td>
         <td class="status">${statusCell(d)}</td>
