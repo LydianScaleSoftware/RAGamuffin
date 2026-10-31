@@ -227,7 +227,7 @@ td.status { white-space: nowrap; }
 .badge.ocr { color: var(--accent); }
 /* Flair stacks up to three high, then starts another column, so the row stays short and narrow. */
 .badges {
-  display: inline-grid; grid-template-rows: repeat(3, auto); grid-auto-flow: column;
+  display: inline-grid; grid-auto-flow: column;
   gap: 2px 4px; justify-items: start; vertical-align: middle; margin-left: 4px;
 }
 .badge.muted-badge { color: var(--muted); }
@@ -368,7 +368,7 @@ label.inline { display: inline-flex; align-items: center; gap: 4px; }
 .job-status.done { color: var(--ok, #15803d); }
 .job-status.failed { color: var(--danger, #b91c1c); }
 .job-status.cancelled { color: var(--muted); }
-.badge.claude-busy { color: #b45309; border-color: currentColor; }
+.status-claude { color: #b45309; font-weight: 600; }
 #claudeDialog { width: min(600px, calc(100vw - 32px)); }
 #claudeDialog .field { display: grid; gap: 4px; margin-top: 10px; }
 #claudeDialog textarea, #claudeDialog .field input { width: 100%; box-sizing: border-box; font: inherit; }

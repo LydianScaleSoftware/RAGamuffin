@@ -150,9 +150,13 @@ function statusCell(d) {
       if (d.convertedTo?.length)
         badge += ` <button type="button" class="badge muted-badge" data-conversion-details="${d.id}" title="Some pages are searched through a conversion; click for details">Conversion${d.convertedTo.length > 1 ? "s" : ""}…</button>`;
       const job = claudeJobFor(d.id);
-      if (job) badge = ` <span class="badge claude-busy" title="${esc(job.label)}: ${esc(job.last ?? job.status)}">Claude ${job.status === "queued" ? "queued" : "working…"}</span>` + badge;
+      const status = job
+        ? `<span class="status-claude" title="${esc(job.label)}: ${esc(job.last ?? job.status)}">Claude ${job.status === "queued" ? "queued" : "working…"}</span>`
+        : `<span class="status-ready">ready</span>`;
       const flair = healthBadge(d) + badge;
-      return `<span class="status-ready">ready</span>${flair ? ` <span class="badges">${flair}</span>` : ""}${notice}`;
+      // Up to five badges stack in a column before a new column starts.
+      const rows = Math.min(5, (flair.match(/class="badge /g) ?? []).length);
+      return `${status}${flair ? ` <span class="badges" style="grid-template-rows: repeat(${rows}, auto)">${flair}</span>` : ""}${notice}`;
     }
   }
 }
@@ -275,7 +279,7 @@ const SORT_VALUES = {
   type: (d) => (d.language ?? d.contentType).toLowerCase(),
   size: (d) => d.sizeBytes,
   chunks: (d) => d.chunkCount,
-  status: (d) => STATUS_RANK[d.status] ?? 9,
+  status: (d) => d.status === "ready" && claudeJobFor(d.id) ? STATUS_RANK.ocr : STATUS_RANK[d.status] ?? 9,
   updated: (d) => d.updatedAt,
 };
 

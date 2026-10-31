@@ -133,7 +133,7 @@ You don't have to open Claude Code and type a prompt to get corrections made. Th
 
   Any task can take extra instructions, which are added to the prompt.
 - **The health dialog** has **Fix with Claude** on each problem page, **Fix all with Claude**, **Check a sample with Claude** and **Ask Claude…**.
-- **The Claude jobs panel** above the documents shows each job's status, its latest step (e.g. `→ get_page p.42`) and cost, with **Cancel** while it runs. Click its title to collapse it. **✕** dismisses a finished job (or **Dismiss finished** for all), which moves it to the older jobs; **Show older** lists them, with **Restore**. **Details** shows the activity log, Claude's closing report, your instructions, the exact prompt, and a `claude --resume` command to continue the conversation yourself. While a job runs, its document shows a **Claude working…** badge, and the list refreshes when it finishes.
+- **The Claude jobs panel** above the documents shows each job's status, its latest step (e.g. `→ get_page p.42`) and cost, with **Cancel** while it runs. Click its title to collapse it. **✕** dismisses a finished job (or **Dismiss finished** for all), which moves it to the older jobs; **Show older** lists them, with **Restore**. **Details** shows the activity log, Claude's closing report, your instructions, the exact prompt, and a `claude --resume` command to continue the conversation yourself. While a job runs, its document's status reads **Claude working…** (or **Claude queued**), and the list refreshes when it finishes.
 
 How the jobs run:
 - **One at a time**, in `data/claude`. A document can't have two jobs queued.
