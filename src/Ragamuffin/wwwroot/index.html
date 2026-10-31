@@ -139,6 +139,11 @@
         <input type="radio" name="reindexChoice" value="revert">
         <span><strong>Revert to embedded text</strong><br><span id="reindexRevertHint" class="hint"></span></span>
       </label>
+      <label class="choice" id="reindexExportRow">
+        <input type="radio" name="reindexChoice" value="export">
+        <span><strong>Export to Markdown…</strong><br><span class="hint">Saves the current page text as one .md file that
+          search uses in place of the PDF's pages. Pages with problems are listed before anything is saved.</span></span>
+      </label>
       <div class="row end">
         <button value="cancel" class="secondary" formnovalidate>Cancel</button>
         <button value="confirm">Start</button>
@@ -146,6 +151,25 @@
     </form>
   </dialog>
 
+  <dialog id="exportDialog">
+    <form method="dialog" id="exportForm">
+      <h2>Export to Markdown <span id="exportTitle" class="muted"></span></h2>
+      <p class="hint">Saves the PDF's current page text as one Markdown file next to it, with a marker where each page
+        starts. Search then uses it in place of the PDF's pages, and Claude can read it as one document. It's re-made
+        automatically whenever the PDF's pages change, e.g. after OCR or Claude's corrections.</p>
+      <p id="exportSummary"></p>
+      <div id="exportProblems" class="export-problems" hidden></div>
+      <p id="exportNotes" class="hint" hidden></p>
+      <label class="field">Name <input id="exportName" required></label>
+      <p id="exportReplace" class="small" hidden></p>
+      <p id="exportResult" class="small" hidden></p>
+      <div class="row end">
+        <button type="button" class="secondary" id="exportFixClaude" hidden>Fix with Claude first…</button>
+        <button value="cancel" class="secondary" id="exportCancel" formnovalidate>Cancel</button>
+        <button type="submit" id="exportStart">Export</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="claudeDialog">
     <form method="dialog" id="claudeForm">
       <h2>Ask Claude <span id="claudeTitle" class="muted"></span></h2>

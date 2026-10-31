@@ -30,6 +30,11 @@ public static class ChunkSources
 
     /// <summary>Claude chose the chunk boundaries (add_document / set_chunks): Claudomatics. Re-indexing keeps them.</summary>
     public const string Claude = "claude";
+
+    /// <summary>
+    /// A Markdown export of a PDF's page text: chunks follow the PDF's pages. Re-made whenever the PDF's pages change.
+    /// </summary>
+    public const string Export = "export";
 }
 
 public sealed class Document

@@ -152,7 +152,7 @@ public sealed class RagTools(RagDbContext db, SearchService search, LibraryGuide
             var kind = d.ContentType == "pdf" ? $"pdf, {d.PageCount} pages{(d.OcrPages > 0 ? ", OCR" : "")}"
                 : d.Encoding is not null ? $"⟦ENCODED BINARY · {d.Encoding} dump⟧ {d.SizeBytes:N0} bytes"
                 : d.Language ?? d.ContentType;
-            line.Append($"- {d.Name} ({kind}, {d.ChunkCount} chunks{(d.ChunkSource == ChunkSources.Claude ? ", Claudomatics" : "")}" +
+            line.Append($"- {d.Name} ({kind}, {d.ChunkCount} chunks{(d.ChunkSource == ChunkSources.Claude ? ", Claudomatics" : d.ChunkSource == ChunkSources.Export ? ", Markdown export" : "")}" +
                         $"{(d.Status == DocumentStatus.Ready ? "" : ", " + d.Status.Replace('_', ' '))})" +
                         (d.Source is null ? "" : $" — conversion of {d.Source}, standing in for its {Covered(DocumentEndpoints.PageRanges(d.SourceSpans))}") +
                         string.Concat(d.ConvertedTo.Select(c =>

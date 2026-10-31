@@ -32,7 +32,7 @@ public sealed class ClaudeIndexer(
 
     /// <summary>Adds or replaces a document with the given text and chunks; embeds and stores them before returning.</summary>
     public async Task<ClaudeIndexResult> AddAsync(string name, string collection, byte[] bytes, IReadOnlyList<ChunkSpec> specs,
-        Guid? sourceDocumentId, CancellationToken ct)
+        Guid? sourceDocumentId, CancellationToken ct, string chunkSource = ChunkSources.Claude)
     {
         name = name.Trim();
         collection = CollectionRules.Normalize(collection);
@@ -69,7 +69,7 @@ public sealed class ClaudeIndexer(
         doc.Encoding = encoding;
         doc.Sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
         doc.SizeBytes = bytes.Length;
-        doc.ChunkSource = ChunkSources.Claude;
+        doc.ChunkSource = chunkSource;
         doc.SourceDocumentId = sourceDocumentId;
         doc.PageCount = doc.OcrPages = doc.EmptyPages = doc.SuspectPages = doc.LayoutPages = 0;
         doc.OcrModel = null;
@@ -162,8 +162,8 @@ public sealed class ClaudeIndexer(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        log.LogInformation("Indexed {Collection}/{Name} with {Chunks} Claudomatics in {Seconds:F1}s",
-            doc.Collection, doc.Name, chunks.Count, (DateTimeOffset.UtcNow - started).TotalSeconds);
+        log.LogInformation("Indexed {Collection}/{Name} with {Chunks} {Kind} chunks in {Seconds:F1}s",
+            doc.Collection, doc.Name, chunks.Count, doc.ChunkSource, (DateTimeOffset.UtcNow - started).TotalSeconds);
     }
 
     /// <summary>The file as text, or as a hex dump (with its encoding) when it's binary.</summary>

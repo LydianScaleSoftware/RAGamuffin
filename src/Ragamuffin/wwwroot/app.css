@@ -370,6 +370,16 @@ label.inline { display: inline-flex; align-items: center; gap: 4px; }
 .job-status.cancelled { color: var(--muted); }
 .status-claude { color: #b45309; font-weight: 600; }
 #claudeDialog { width: min(600px, calc(100vw - 32px)); }
+#exportDialog { width: min(600px, calc(100vw - 32px)); }
+dialog h2 { overflow-wrap: anywhere; }
+#exportDialog .field { display: grid; gap: 4px; margin-top: 10px; }
+#exportDialog .field input { width: 100%; box-sizing: border-box; font: inherit; }
+.export-problems { border: 1px solid var(--warn); border-radius: 8px; padding: 4px 12px; color: var(--text);
+  background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.export-problems.only-muted { border-color: var(--border); background: transparent; }
+.export-problems p { margin: 6px 0; }
+.export-problems ul { max-height: 180px; overflow-y: auto; margin: 6px 0; padding-left: 20px; font-size: 13px; }
+
 #claudeDialog .field { display: grid; gap: 4px; margin-top: 10px; }
 #claudeDialog textarea, #claudeDialog .field input { width: 100%; box-sizing: border-box; font: inherit; }
 .claude-log { max-height: 50vh; overflow: auto; white-space: pre-wrap; font-size: 12px; }

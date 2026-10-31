@@ -139,8 +139,9 @@ public sealed class IngestWorker(
             return;
         }
 
-        // Chunks Claude chose keep their boundaries; only if they no longer fit the text does the chunker take over.
-        if (doc.ChunkSource == ChunkSources.Claude)
+        // Chunks Claude chose (or an export's page chunks) keep their boundaries; only if they no longer fit the text
+        // does the chunker take over.
+        if (doc.ChunkSource is ChunkSources.Claude or ChunkSources.Export)
         {
             if (await scope.ServiceProvider.GetRequiredService<ClaudeIndexer>().RebuildAsync(doc, ct)) return;
             doc.ChunkSource = ChunkSources.Auto;
@@ -437,6 +438,13 @@ public sealed class IngestWorker(
             d.LayoutMode = null;
             d.OcrRequestedAt = null;
         }, ct);
+
+        // A Markdown export of the PDF stands in for it in search, so it follows the pages' new text.
+        if (committed)
+        {
+            using var exportScope = scopes.CreateScope();
+            await exportScope.ServiceProvider.GetRequiredService<MarkdownExporter>().RefreshAsync(doc.Id, ct);
+        }
 
         // Optional: queue OCR of text-less pages and/or layout analysis straight after import.
         if (committed && expectedStatus == DocumentStatus.Pending)

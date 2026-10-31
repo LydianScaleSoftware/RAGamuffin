@@ -57,6 +57,11 @@ public sealed partial class DocumentReader(RagDbContext db, IOptions<RagOptions>
         if (await db.Collections.AnyAsync(c => c.Name == doc.Collection && c.Muted, ct))
             outline = $"Note: the {doc.Collection} collection is muted (left out of search unless named), so treat it as the user's " +
                       "alternative or older source.\n\n" + outline;
+        if (isPdf && await db.Documents.AsNoTracking()
+                .Where(d => d.SourceDocumentId == doc.Id && d.Status == DocumentStatus.Ready && d.ChunkSource == ChunkSources.Export)
+                .Select(d => d.Name).FirstOrDefaultAsync(ct) is { } export)
+            outline = $"Also exported as Markdown: \"{export}\" holds this PDF's text in one file (page markers <!-- page N -->). " +
+                      "Prefer it for reading long passages or whole sections (section= or lines=); search already uses it.\n\n" + outline;
         if (isPdf && doc.Status == DocumentStatus.Ready)
             outline = $"Page health: {doc.Health}" +
                       (doc.Health.Contains("problem page") ? $" (list_pages(\"{doc.Name}\", which=\"problems\") lists them)" : "") + ".\n\n" + outline;

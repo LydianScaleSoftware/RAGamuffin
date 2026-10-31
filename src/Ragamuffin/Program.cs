@@ -56,6 +56,7 @@ builder.Services.AddSingleton<FileStore>();
 builder.Services.AddSingleton<IngestQueue>();
 builder.Services.AddScoped<IngestService>();
 builder.Services.AddScoped<ClaudeIndexer>();
+builder.Services.AddScoped<MarkdownExporter>();
 builder.Services.AddScoped<CollectionService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<StatsService>();
@@ -122,6 +123,7 @@ app.MapClaudomaticApi();
 app.MapConversionApi();
 app.MapHealthApi();
 app.MapClaudeApi();
+app.MapExportApi();
 app.MapMcp("/mcp");
 
 app.Run();

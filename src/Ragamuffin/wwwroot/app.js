@@ -551,6 +551,7 @@ async function openReindexDialog(id) {
   $("reindexRevertHint").textContent =
     `${revertablePages} OCR'd page${revertablePages > 1 ? "s have" : " has"} embedded text to go back to. Pages without embedded text keep their OCR.`;
 
+  $("reindexExportRow").hidden = d.status !== "ready";
   $("reindexForm").querySelector('input[value="keep"]').checked = true;
   $("reindexDialog").returnValue = "";
   $("reindexDialog").showModal();
@@ -576,6 +577,7 @@ $("reindexDialog").addEventListener("close", async () => {
   if ($("reindexDialog").returnValue !== "confirm" || !reindexDoc) return;
   const choice = $("reindexForm").querySelector('input[name="reindexChoice"]:checked').value;
   const id = reindexDoc.id;
+  if (choice === "export") return openExportDialog(id);
   try {
     if (choice === "keep") await api(`/api/documents/${id}/reindex`, { method: "POST" });
     else if (choice === "ocr") await postJson(`/api/documents/${id}/ocr`, { scope: $("ocrScope").value });
@@ -956,5 +958,102 @@ $("claudeDialog").addEventListener("close", async () => {
     await startClaude(claudeDocId, { task, pages: $("claudePagesRow").hidden ? null : $("claudePages").value, instructions: $("claudeInstructions").value });
   } catch (err) {
     alert(err.message);
+  }
+});
+
+// ---------- Markdown export ----------
+let exportDocId = null;
+let exportCheck = null; // debounce for the name check
+
+async function openExportDialog(id, name) {
+  const d = docs.find((x) => x.id === id);
+  if (!d) return;
+  exportDocId = id;
+  $("exportTitle").textContent = d.name.split("/").pop();
+  $("exportResult").hidden = true;
+  $("exportStart").hidden = false;
+  $("exportStart").disabled = true;
+  $("exportCancel").textContent = "Cancel";
+  $("exportSummary").textContent = "Reading the pages…";
+  $("exportProblems").hidden = $("exportNotes").hidden = $("exportReplace").hidden = $("exportFixClaude").hidden = true;
+  $("exportDialog").returnValue = "";
+  if (!$("exportDialog").open) $("exportDialog").showModal();
+  try {
+    const p = await api(`/api/documents/${id}/markdown-export${name ? `?name=${encodeURIComponent(name)}` : ""}`);
+    if (exportDocId !== id) return;
+    if (!name) $("exportName").value = p.name;
+    renderExportPreview(d, p);
+  } catch (err) {
+    $("exportSummary").textContent = err.message;
+  }
+}
+
+function renderExportPreview(d, p) {
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  $("exportSummary").textContent = `${plural(p.pages, "page")}: ${p.pagesWithText} with text` +
+    (p.blank ? `, ${p.blank} blank` : "") + `. About ${Math.max(1, Math.round(p.chars / 1024))} KB of Markdown in ${plural(p.chunks, "chunk")}.`;
+
+  const open = p.problems.filter((x) => !x.muted);
+  const muted = p.problems.filter((x) => x.muted);
+  if (p.problems.length) {
+    $("exportProblems").innerHTML =
+      (open.length ? `<p><strong>⚠ ${plural(open.length, "page")} ${open.length === 1 ? "has" : "have"} text that's missing or probably wrong.</strong>
+        ${open.length === 1 ? "It's" : "They're"} exported as ${open.length === 1 ? "it is" : "they are"}, with the problem noted in the page's marker, so
+        search may miss or misread ${open.length === 1 ? "it" : "them"} until ${open.length === 1 ? "it's" : "they're"} fixed.</p>` : "") +
+      (muted.length ? `<p>${plural(muted.length, "muted problem")} ${muted.length === 1 ? "is" : "are"} included as ${muted.length === 1 ? "it is" : "they are"}.</p>` : "") +
+      `<ul>${p.problems.map((x) => `<li>p.${x.page} — ${esc(x.problem)}${x.muted ? ' <span class="muted">(muted)</span>' : ""}</li>`).join("")}</ul>`;
+    $("exportProblems").classList.toggle("only-muted", open.length === 0);
+    $("exportProblems").hidden = false;
+  }
+  $("exportFixClaude").hidden = !(open.length && claudeStatus?.available);
+  const verified = d.verifiedAt || p.verified >= p.pagesWithText;
+  $("exportNotes").textContent = !verified && p.unverified
+    ? `${plural(p.unverified, "page")} ${p.unverified === 1 ? "is" : "are"} machine-read and not checked against the page images; the export has the same text the PDF is searched with now.`
+    : "";
+  $("exportNotes").hidden = !$("exportNotes").textContent;
+
+  const r = p.replaces;
+  $("exportReplace").innerHTML = !r ? ""
+    : r.chunkSource === "export" && r.isConversion ? `Updates the existing export <strong>${esc(r.name)}</strong>.`
+    : `<span class="status-failed">Replaces <strong>${esc(r.name)}</strong>, ${r.chunkSource === "claude" ? "a conversion with Claudomatics (Claude's own chunks), which would be lost" : `an existing ${esc(r.contentType)} document`}. Choose another name to keep it.</span>`;
+  const others = p.conversions.filter((c) => c.chunkSource !== "export" || c.name !== r?.name);
+  if (others.length)
+    $("exportReplace").innerHTML += `${$("exportReplace").innerHTML ? "<br>" : ""}The PDF also has ${others.length === 1 ? "a conversion" : "conversions"}: ${others.map((c) => esc(c.name)).join(", ")}. Pages both cover can show up twice in search.`;
+  $("exportReplace").hidden = !$("exportReplace").innerHTML;
+  $("exportStart").textContent = open.length ? "Export anyway" : "Export";
+  $("exportStart").disabled = p.status !== "ready" || p.pagesWithText === 0;
+  if (p.pagesWithText === 0) $("exportSummary").textContent += " There's no text to export yet; run OCR first.";
+}
+
+$("exportName").addEventListener("input", () => {
+  clearTimeout(exportCheck);
+  const name = $("exportName").value.trim();
+  if (name) exportCheck = setTimeout(() => openExportDialog(exportDocId, name), 400);
+});
+
+$("exportFixClaude").addEventListener("click", () => {
+  $("exportDialog").close();
+  openClaudeDialog(exportDocId);
+});
+
+$("exportForm").addEventListener("submit", async (e) => {
+  if (e.submitter?.value === "cancel") return;
+  e.preventDefault();
+  const name = $("exportName").value.trim();
+  if (!/\.md$/i.test(name)) { alert("End the name in .md"); return; }
+  $("exportStart").disabled = true;
+  $("exportStart").textContent = "Exporting…";
+  try {
+    const r = await postJson(`/api/documents/${exportDocId}/markdown-export`, { name });
+    $("exportResult").innerHTML = `<span class="status-ready">✓</span> ${r.outcome === "replaced" ? "Updated" : "Saved"} <strong>${esc(r.name)}</strong>
+      with ${r.chunks} chunks; search uses it now. <a href="/api/documents/${r.id}/file" download>Download the .md</a>`;
+    $("exportResult").hidden = false;
+    $("exportStart").hidden = true;
+    $("exportCancel").textContent = "Close";
+    refresh();
+  } catch (err) {
+    alert(err.message);
+    $("exportStart").disabled = false;
+    $("exportStart").textContent = "Export";
   }
 });

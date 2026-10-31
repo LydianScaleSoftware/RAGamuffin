@@ -158,11 +158,12 @@ When a client connects, the server also sends **instructions** that are added to
 - Pick the target in **Add to collection**, then drop files or whole folders, or use the pickers. Folder uploads keep relative paths as document names and skip dot-folders, `node_modules`, `bin` and `obj`.
 - **New collection…** opens the collections page ready to create one. After creating it, you return with the new collection selected.
 - Uploading the same name into the same collection replaces the document. Identical content is skipped.
-- Each document can be deleted, re-indexed or inspected. Inspecting shows its chunks, the extracted text and the original file.
+- Each document can be deleted, re-indexed or inspected. Inspecting shows its chunks, the extracted text and the original file. The row's icon buttons are re-index (database with an arrow), Claude (the Claude spark) and delete (trash can); hover for their names. The Type column shows the document type as an icon (PDF, Markdown, text, code, or a plain page for anything else).
+- **Export to Markdown…** (the last choice in a ready PDF's **Re-index…** dialog) turns a PDF's current page text into one Markdown document next to it (`Name.md`, editable), with a `<!-- page N -->` marker where each page starts. It reads no pages again: each page contributes the text it's searched with now (Claude's, OCR, layout or embedded), whatever its quality. Before exporting, the dialog warns about pages whose text is missing or probably wrong (no text, garbled text, a region the OCR model failed on), lists them, and offers **Fix with Claude first…**; exported anyway, they're marked in their page markers (e.g. `<!-- page 20: No text, but the page image has content -->`). It also says if the name would replace another document, and names other conversions of the PDF. The export's chunks follow the PDF's pages, so search uses it in place of the PDF's own chunks and still cites PDF pages; `get_document` on the PDF points Claude to it for reading long passages. It's re-made automatically whenever the PDF's pages change (OCR, layout, Claude's corrections, re-index). Download it from the result line, the Conversions page, or Inspect.
 - **Filter** by collection and name, and sort by any column header (**Clear sort** goes back to collection, then name). The collection, name and Stats drill-down filters are remembered in the browser between visits; **Reset filters** shows everything again. The search boxes have a **✕** button to clear them.
 - **Test search** shows the passages a search returns, with an *include muted* box for muted collections.
 
-**Status badges** follow a ready document's status, stacked up to three high before starting another column:
+**Status badges** follow a ready document's status, stacked up to five high before starting another column:
 
 | Badge | Meaning |
 |---|---|
@@ -229,6 +230,8 @@ The web UI uses a JSON API under `/api`, on the same port. It has no authenticat
 | `GET /api/claudomatics?q=&collection=&limit=` | Claudomatics with snippets, for the Claudomatics page. |
 | `GET /api/chunks/{id}` · `PUT /api/chunks/{id}` · `DELETE /api/chunks/{id}` | One chunk · change its title or summary (re-embedded) · delete it. |
 | `GET /api/documents/{id}/claudomatic-dates` | When each of a document's Claudomatics was written (the delete dialog uses it to warn about other days). |
+| `GET /api/documents/{id}/markdown-export?name=` | What a Markdown export of the PDF would hold: page counts, pages with problems, chunk count, and what `name` would replace. |
+| `POST /api/documents/{id}/markdown-export` | Body `{name}`. Saves the export as a Markdown document linked to the PDF (replacing one of the same name). |
 | `GET /api/conversions` · `GET /api/conversions/{sourceId}/zip` | Conversions grouped by source · all of one source's conversions as a zip. |
 | `GET /api/documents/{id}/health` | A PDF's page health: counts per state, the pages with problems, notes, mutes or blanks, the document's verification and its notice. |
 | `POST /api/documents/{id}/pages/mute` · `/pages/verify` | `{"pages": [17, 31], "muted": true}` mutes (or unmutes) those pages' problems or notes · `{"pages": […], "verified": true}` marks their text correct. No pages means every page. |
